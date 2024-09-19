@@ -7,7 +7,17 @@
 
     <fragment
         android:id="@+id/homeScreenFragment"
-        android:name="com.droidnova.screenrecorder.ui.screens.homescreenfragment.HomeScreenFragment"
+        android:name="com.droidnova.screenrecorder.ui.screens.homescreen.HomeScreenFragment"
         android:label="fragment_home_screen"
         tools:layout="@layout/fragment_home_screen" />
+    <fragment
+        android:id="@+id/recordingsScreenFragment"
+        android:name="com.droidnova.screenrecorder.ui.screens.recordingsscreen.RecordingsScreenFragment"
+        android:label="fragment_recordings_screen"
+        tools:layout="@layout/fragment_recordings_screen" />
+    <fragment
+        android:id="@+id/settingsScreenFragment"
+        android:name="com.droidnova.screenrecorder.ui.screens.settingsscreen.SettingsScreenFragment"
+        android:label="fragment_settings_screen"
+        tools:layout="@layout/fragment_settings_screen" />
 </navigation>
