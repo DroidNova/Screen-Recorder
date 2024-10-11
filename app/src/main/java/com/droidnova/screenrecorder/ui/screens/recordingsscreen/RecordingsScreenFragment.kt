@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatDialog
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
@@ -25,6 +26,7 @@ import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.databinding.BottomSheetMoreOptionBinding
 import com.droidnova.screenrecorder.databinding.DialogProgressBinding
 import com.droidnova.screenrecorder.databinding.FragmentRecordingsScreenBinding
+import com.droidnova.screenrecorder.utils.DialogUtil
 import com.droidnova.screenrecorder.utils.PermissionUtils
 import com.droidnova.screenrecorder.utils.PreferenceUtil
 import com.droidnova.screenrecorder.utils.VideoUtils
@@ -74,7 +76,6 @@ class RecordingsScreenFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         setupRecyclerView()
-        viewModel.setupFileObserver()
         setupListeners()
         if (PreferenceUtil.showScopedStorageDialog){
             showSaveInfoDialog()
@@ -109,10 +110,12 @@ class RecordingsScreenFragment : Fragment() {
             adapter = videoAdapter
             hasFixedSize()
         }
-        observeVideoListChanges()
+        val dialog = DialogUtil.showLoadingDialog(requireContext(),"Please Wait...")
+        viewModel.loadVideosFromFolder()
+        observeVideoListChanges(dialog)
     }
 
-    private fun observeVideoListChanges() {
+    private fun observeVideoListChanges(dialog: AppCompatDialog) {
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.allVideos.observe(viewLifecycleOwner) { videosList ->
                 Log.d("myTag", "Loaded videos: $videosList")
@@ -122,6 +125,9 @@ class RecordingsScreenFragment : Fragment() {
                     binding?.tvNoVideos?.visibility = View.GONE
                 }
                 videoAdapter.submitList(videosList)
+                if (dialog.isShowing){
+                    dialog.dismiss()
+                }
 
             }
         }

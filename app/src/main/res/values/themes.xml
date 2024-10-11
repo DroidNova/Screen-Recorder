@@ -39,4 +39,11 @@
     </style>
 
     <style name="Theme.ScreenRecorder" parent="Base.Theme.ScreenRecorder" />
+
+    <!-- Dialog Style -->
+    <style name="ThemeOverlay.Material3.Dialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <!-- Customize dialog style -->
+        <item name="materialAlertDialogBodyTextStyle">@style/TextAppearance.Material3.BodyLarge</item>
+    </style>
+
 </resources>

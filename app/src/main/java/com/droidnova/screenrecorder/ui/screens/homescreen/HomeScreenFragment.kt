@@ -30,7 +30,7 @@ class HomeScreenFragment : Fragment() {
             screenRecordingService = serviceBinder.getService()
             screenRecordingService?.registerCallback(screenRecordingCallback)
             isBound = true
-            if (screenRecordingService?.isRecording == true) {
+            if (screenRecordingService?.isServiceRunning == true) {
                 binding?.btnStartRecording?.text = "Stop"
             }
             Log.e("myTag","onServiceConnected")
