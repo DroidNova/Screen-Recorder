@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <!-- 3Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_3mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="3Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_3mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="3Mbps" />
+
+        <TextView
+            android:id="@+id/text_3mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Low quality" />
+    </LinearLayout>
+
+    <!-- 6Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_6mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="6Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_6mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="6Mbps" />
+
+        <TextView
+            android:id="@+id/text_6mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Medium quality" />
+    </LinearLayout>
+
+    <!-- 8Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_8mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="8Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_8mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="8Mbps" />
+
+        <TextView
+            android:id="@+id/text_8mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Medium-High quality" />
+    </LinearLayout>
+
+    <!-- 10Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_10mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="10Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_10mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="10Mbps" />
+
+        <TextView
+            android:id="@+id/text_10mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="High quality" />
+    </LinearLayout>
+
+    <!-- 12Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_12mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="12Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_12mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="12Mbps" />
+
+        <TextView
+            android:id="@+id/text_12mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="High quality" />
+    </LinearLayout>
+
+    <!-- 15Mbps Quality Option -->
+    <LinearLayout
+        android:id="@+id/ll_15mbps"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:tag="15Mbps"
+        android:orientation="horizontal">
+
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/radio_15mbps"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="false"
+            android:text="15Mbps" />
+
+        <TextView
+            android:id="@+id/text_15mbps"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Highest quality" />
+    </LinearLayout>
+
+</LinearLayout>

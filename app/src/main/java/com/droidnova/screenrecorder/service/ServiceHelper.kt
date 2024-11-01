@@ -26,18 +26,16 @@ import android.view.Surface
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
-import androidx.core.content.PermissionChecker.checkSelfPermission
 import com.droidnova.screenrecorder.MainActivity
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.utils.EncodingUtil
 import com.droidnova.screenrecorder.utils.FileUtil
-import com.droidnova.screenrecorder.utils.MuxingUtil
+import com.droidnova.screenrecorder.utils.MediaSettingsUtil
+import com.droidnova.screenrecorder.utils.PreferenceUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 
 class ServiceHelper(private val service: ScreenRecordingService) {
 
@@ -49,6 +47,11 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     private var audioRecord: AudioRecord? = null
     private var videoPath: String? = null
     private var audioPath: String? = null
+
+    private var recordingStartTime: Long = 0
+    private var pausedTime = 0L
+    private var totalElapsedTime = 0L
+    private var isPaused = false
 
     fun onCreate() {
         createNotificationChannel()
@@ -100,15 +103,56 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
         setupMediaRecorder()
         setupVirtualDisplay()
-        setupAudioCapture()
+        //setupAudioCapture()
 
         try {
             mediaRecorder.start()
             service.callback?.onRecordingStarted()
+            startRecordingTimer()
         } catch (e: Exception) {
             Log.e(ScreenRecordingService.TAG, "Failed to start MediaRecorder", e)
             stopScreenRecording() // Ensure cleanup on failure
         }
+    }
+
+    fun pauseScreenRecording() {
+        if (!isPaused) {
+            mediaRecorder.pause()
+            isPaused = true
+            pausedTime = System.currentTimeMillis()
+            totalElapsedTime += (pausedTime - recordingStartTime) // Accumulate the elapsed time
+            updateNotification()
+        }
+    }
+
+    fun resumeScreenRecording() {
+        if (isPaused) {
+            mediaRecorder.resume()
+            isPaused = false
+            recordingStartTime = System.currentTimeMillis() // Reset start time after resuming
+            startRecordingTimer() // Start timer again
+            updateNotification()
+        }
+    }
+
+    private fun startRecordingTimer() {
+        recordingStartTime = System.currentTimeMillis()
+        CoroutineScope(Dispatchers.Main).launch {
+            while (service.isServiceRunning && !isPaused) {
+                val elapsedTime = totalElapsedTime + (System.currentTimeMillis() - recordingStartTime)
+                updateTimeUI(elapsedTime)
+                delay(1000) // Update every second
+            }
+        }
+    }
+
+    private fun updateTimeUI(elapsedTime: Long) {
+        val minutes = (elapsedTime / 1000) / 60
+        val seconds = (elapsedTime / 1000) % 60
+        val timeString = String.format("%02d:%02d", minutes, seconds)
+
+        // Send the updated time to the UI using the callback
+        service.callback?.onRecordingTimeUpdate(timeString)
     }
 
     private fun setupMediaRecorder() {
@@ -117,15 +161,34 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         } else {
             MediaRecorder()
         }.apply {
-            setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            val displayMetrics = getDisplayMetrics()
-            setVideoSize(displayMetrics.widthPixels, displayMetrics.heightPixels)
-            setVideoEncodingBitRate(15_000_000)
-            setVideoFrameRate(60)
+            // Fetch stored preferences using PreferenceUtil
+            val selectedQuality = PreferenceUtil.selectedVideoQuality
+            val selectedResolution = PreferenceUtil.selectedVideoResolution
+            val selectedFps = PreferenceUtil.selectedVideoFps
+            Log.e("myTag","selectedQuality $selectedQuality, selectedResolution $selectedResolution, selectedFps $selectedFps")
 
-            videoPath = FileUtil.createVideoFile(service, "Temp").absolutePath
+            // Map preferences to actual MediaRecorder settings
+            val bitrate = MediaSettingsUtil.getBitRateFromQuality(selectedQuality)
+            val (videoHeight, videoWidth) = MediaSettingsUtil.getResolutionFromString(selectedResolution)
+            val fps = MediaSettingsUtil.getFpsFromString(selectedFps)
+
+            // Set audio source to microphone
+            setAudioSource(MediaRecorder.AudioSource.MIC)
+            // Set Video source to record
+            setVideoSource(MediaRecorder.VideoSource.SURFACE)
+            // Set output format
+            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            // Set video encoder
+            setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+            // Set audio encoder
+            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+
+            // Set the mapped values for video size, bitrate, and FPS
+            setVideoSize(videoWidth, videoHeight)
+            setVideoEncodingBitRate(bitrate)
+            setVideoFrameRate(fps)
+
+            videoPath = FileUtil.createVideoFile(service, "ScreenRecording").absolutePath
             setOutputFile(videoPath)
 
             try {
@@ -137,6 +200,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         }
         surface = mediaRecorder.surface
     }
+
 
     private fun setupAudioCapture() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -178,6 +242,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
     private fun setupVirtualDisplay() {
         val displayMetrics = getDisplayMetrics()
+        Log.e(ScreenRecordingService.TAG,"width ${displayMetrics.widthPixels} height ${displayMetrics.heightPixels}")
         try {
             virtualDisplay = mediaProjection.createVirtualDisplay(
                 "ScreenRecording",
@@ -219,23 +284,9 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         virtualDisplay.release()
         mediaProjection.stop()
         service.callback?.onRecordingStopped()
-
-        CoroutineScope(Dispatchers.IO).launch {
-            delay(2000)
-            try {
-                if (videoPath != null && audioPath != null) {
-                    MuxingUtil.muxAudioAndVideo(videoPath!!, audioPath!!, FileUtil.createVideoFile(service,"ScreenRecording").absolutePath)
-                    Log.i(ScreenRecordingService.TAG, "Muxing completed")
-                } else {
-                    Log.e(ScreenRecordingService.TAG, "Muxing failed: videoPath or audioPath is null")
-                }
-                withContext(Dispatchers.Main) {
-                    stopForegroundService()
-                }
-            } catch (e: Exception) {
-                Log.e(ScreenRecordingService.TAG, "Muxing failed: ${e.message}")
-            }
-        }
+        recordingStartTime = 0
+        service.callback?.onRecordingTimeUpdate("00:00")
+        stopForegroundService()
     }
 
     private fun stopForegroundService() {
@@ -243,20 +294,56 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         service.stopSelf()
     }
 
+    private fun updateNotification() {
+        val notification = createNotification()
+        // Get the system NotificationManager service
+        val notificationManager = service.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        // Update the notification
+        notificationManager.notify(ScreenRecordingService.FOREGROUND_SERVICE_ID, notification)
+    }
+
+
     private fun createNotification(): Notification {
+        // Intent for stopping the recording
+        val stopIntent = Intent(service, ScreenRecordingService::class.java).apply {
+            action = ScreenRecordingService.ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(service, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE)
+
+        // Intent for pausing the recording
+        val pauseIntent = Intent(service, ScreenRecordingService::class.java).apply {
+            action = ScreenRecordingService.ACTION_PAUSE
+        }
+        val pausePendingIntent = PendingIntent.getService(service, 0, pauseIntent, PendingIntent.FLAG_IMMUTABLE)
+
+        // Intent for resuming the recording
+        val resumeIntent = Intent(service, ScreenRecordingService::class.java).apply {
+            action = ScreenRecordingService.ACTION_RESUME
+        }
+        val resumePendingIntent = PendingIntent.getService(service, 0, resumeIntent, PendingIntent.FLAG_IMMUTABLE)
+
+        // Open app intent (MainActivity)
         val openHomeIntent = Intent(service, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
 
-        val openHomePendingIntent = PendingIntent.getActivity(service, 0, openHomeIntent, PendingIntent.FLAG_IMMUTABLE)
-
-        return NotificationCompat.Builder(service, ScreenRecordingService.FOREGROUND_SERVICE_ID.toString())
-            .setContentTitle(service.getString(R.string.screen_recording_title))
-            .setContentText(service.getString(R.string.screen_recording_text))
+        // Notification builder
+        val builder = NotificationCompat.Builder(service, ScreenRecordingService.FOREGROUND_SERVICE_ID.toString())
             .setSmallIcon(R.drawable.ic_recording)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openHomePendingIntent)
-            .build()
+
+
+        // Conditionally show either Pause or Resume based on current state
+        if (isPaused) {
+            builder.addAction(R.drawable.ic_delete, "Resume", resumePendingIntent) // Resume button
+        } else {
+            builder.addAction(R.drawable.ic_delete, "Pause", pausePendingIntent) // Pause button
+        }
+        builder.addAction(R.drawable.ic_delete, "Stop", stopPendingIntent) // Stop button
+
+        return builder.build()
     }
+
+
 }

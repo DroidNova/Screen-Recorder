@@ -7,6 +7,7 @@ import android.os.Binder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import com.droidnova.screenrecorder.utils.PreferenceUtil
 
 class ScreenRecordingService : Service() {
 
@@ -19,6 +20,7 @@ class ScreenRecordingService : Service() {
         super.onCreate()
         Log.i(TAG, "onCreate")
         serviceHelper = ServiceHelper(this)
+        PreferenceUtil.init(this)
         serviceHelper.onCreate()
     }
 
@@ -42,6 +44,15 @@ class ScreenRecordingService : Service() {
                     } else {
                         Log.e(TAG, "Failed to retrieve MediaProjection data")
                     }
+                }
+                ACTION_RESUME -> {
+                    serviceHelper.resumeScreenRecording()
+                }
+                ACTION_PAUSE -> {
+                    serviceHelper.pauseScreenRecording()
+                }
+                ACTION_STOP -> {
+                    serviceHelper.stopScreenRecording()
                 }
                 else -> Log.w(TAG, "Unexpected action: ${it.action}")
             }
@@ -71,12 +82,15 @@ class ScreenRecordingService : Service() {
     interface RecordingCallbackInterface {
         fun onRecordingStarted()
         fun onRecordingStopped()
-    }
+        fun onRecordingTimeUpdate(timeString: String)     }
 
     companion object {
         const val TAG = "ScreenRecordingService"
         const val ACTION_STOP_SERVICE = "action_stop_service"
         const val ACTION_START_SERVICE = "action_start_service"
+        const val ACTION_STOP = "com.droidnova.screenrecorder.STOP"
+        const val ACTION_PAUSE = "com.droidnova.screenrecorder.PAUSE"
+        const val ACTION_RESUME = "com.droidnova.screenrecorder.RESUME"
         const val FOREGROUND_SERVICE_ID = 101
     }
 }

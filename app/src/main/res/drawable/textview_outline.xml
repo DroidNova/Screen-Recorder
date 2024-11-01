@@ -1,0 +1,13 @@
+<!-- res/drawable/textview_outline.xml -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Define the solid background color (if needed) -->
+    <solid android:color="@android:color/transparent"/>
+
+    <!-- Define the stroke for the outline -->
+    <stroke
+        android:width="2dp"
+        android:color="@color/outline_color"/>
+
+    <!-- Optional: Define the corner radius if you want rounded corners -->
+    <corners android:radius="8dp"/>
+</shape>

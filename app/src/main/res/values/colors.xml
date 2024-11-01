@@ -91,5 +91,7 @@
     <color name="selectedPrimaryTextColor">#000000</color>
     <color name="selectedSecondaryTextColor">#000000</color>"
 
+    <color name="outline_color">#388E3C</color>
+
 
 </resources>
