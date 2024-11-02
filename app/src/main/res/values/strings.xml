@@ -10,4 +10,11 @@
     <!-- TODO: Remove or change this placeholder text -->
     <string name="hello_blank_fragment">Hello blank fragment</string>
 
+    <string name="share_app">Share_app</string>
+    <string name="rate_us">Rate Us</string>
+    <string name="privacy_policy">Privacy Policy</string>
+    <string name="report_bugs">Report Bugs</string>
+    <string name="join_whatsapp_community">Join Whatsapp Community</string>
+    <string name="version_info">Version Info</string>
+
 </resources>

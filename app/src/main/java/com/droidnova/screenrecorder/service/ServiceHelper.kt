@@ -10,6 +10,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.res.Resources
+import android.graphics.Color
+import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.AudioAttributes
@@ -20,10 +23,14 @@ import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.CountDownTimer
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Gravity
 import android.view.Surface
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.droidnova.screenrecorder.MainActivity
@@ -43,6 +50,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     private lateinit var mediaProjection: MediaProjection
     private lateinit var virtualDisplay: VirtualDisplay
     private lateinit var mediaRecorder: MediaRecorder
+    private var windowManager: WindowManager? = null
     private lateinit var surface: Surface
     private var audioRecord: AudioRecord? = null
     private var videoPath: String? = null
@@ -55,6 +63,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
     fun onCreate() {
         createNotificationChannel()
+        windowManager = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         mediaProjectionManager = service.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
     }
 
@@ -88,9 +97,12 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         } else {
             service.startForeground(ScreenRecordingService.FOREGROUND_SERVICE_ID, notification)
         }
-
         service.isServiceRunning = true
-        startScreenRecording(resultCode, data)
+        // Display countdown on screen
+        showCountdownOverlay {
+            // After countdown completes, start the screen recording
+            startScreenRecording(resultCode, data)
+        }
     }
 
     private fun startScreenRecording(resultCode: Int, data: Intent) {
@@ -241,7 +253,8 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     }
 
     private fun setupVirtualDisplay() {
-        val displayMetrics = getDisplayMetrics()
+        val displayMetrics = Resources.getSystem().displayMetrics
+
         Log.e(ScreenRecordingService.TAG,"width ${displayMetrics.widthPixels} height ${displayMetrics.heightPixels}")
         try {
             virtualDisplay = mediaProjection.createVirtualDisplay(
@@ -258,13 +271,6 @@ class ServiceHelper(private val service: ScreenRecordingService) {
             Log.e(ScreenRecordingService.TAG, "Failed to create VirtualDisplay", e)
             stopScreenRecording()
         }
-    }
-
-    private fun getDisplayMetrics(): DisplayMetrics {
-        val displayMetrics = DisplayMetrics()
-        val windowManager = service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        windowManager.defaultDisplay.getMetrics(displayMetrics)
-        return displayMetrics
     }
 
     fun stopScreenRecording() {
@@ -288,6 +294,45 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         service.callback?.onRecordingTimeUpdate("00:00")
         stopForegroundService()
     }
+
+    // Function to show countdown overlay
+    private fun showCountdownOverlay(onCountdownComplete: () -> Unit) {
+        val countdownText = TextView(service).apply {
+            textSize = 60f
+            setTextColor(Color.GREEN)
+            setBackgroundColor(Color.parseColor("#80000000")) // Semi-transparent background
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        // Add countdownText to a full-screen overlay
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            PixelFormat.TRANSLUCENT
+        )
+        windowManager?.addView(countdownText, params)
+
+        // Initialize the countdown timer
+        val countdownTimer = object : CountDownTimer(3000, 1000) {
+            override fun onTick(millisUntilFinished: Long) {
+                countdownText.text = (millisUntilFinished / 1000 + 1).toString()
+            }
+
+            override fun onFinish() {
+                // Remove the countdown overlay and start recording
+                windowManager?.removeView(countdownText)
+                onCountdownComplete() // Start recording
+            }
+        }
+        countdownTimer.start()
+    }
+
 
     private fun stopForegroundService() {
         service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
@@ -340,7 +385,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         } else {
             builder.addAction(R.drawable.ic_delete, "Pause", pausePendingIntent) // Pause button
         }
-        builder.addAction(R.drawable.ic_delete, "Stop", stopPendingIntent) // Stop button
+        builder.addAction(R.drawable.ic_delete, "Save", stopPendingIntent) // Stop button
 
         return builder.build()
     }
