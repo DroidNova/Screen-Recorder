@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "836215445305",
+    "project_id": "screen-recorder-a8b67",
+    "storage_bucket": "screen-recorder-a8b67.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:836215445305:android:31de50ac3009097c08fae8",
+        "android_client_info": {
+          "package_name": "com.droidnova.screenrecorder"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCZKma8qsdHjI-sDHj_g0OVKOtndDIKYVc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

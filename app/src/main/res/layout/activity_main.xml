@@ -36,8 +36,7 @@
     <com.google.android.material.bottomnavigation.BottomNavigationView
         android:id="@+id/bottom_nav"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        android:paddingTop="5dp"
+        android:layout_height="wrap_content"
         android:background="@color/navigation_bar_color"
         app:elevation="0dp"
         app:itemActiveIndicatorStyle="@color/white"
@@ -46,7 +45,6 @@
         app:menu="@menu/menu_bottom_home"
         app:itemIconTint="@color/bottom_nav_color"
         app:itemTextColor="@color/bottom_nav_color"
-        app:itemPaddingTop="5dp"
-        app:itemPaddingBottom="5dp" />
+        />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

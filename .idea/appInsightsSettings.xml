@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.droidnova.screenrecorder" />
+                  <option name="mobileSdkAppId" value="1:836215445305:android:31de50ac3009097c08fae8" />
+                  <option name="projectId" value="screen-recorder-a8b67" />
+                  <option name="projectNumber" value="836215445305" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
