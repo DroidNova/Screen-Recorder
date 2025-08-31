@@ -1,5 +1,7 @@
 package com.droidnova.screenrecorder.utils
 
+import android.util.Log
+
 object MediaSettingsUtil {
 
     // Convert quality string to bitrate
@@ -16,15 +18,32 @@ object MediaSettingsUtil {
     }
 
     // Convert resolution string to width and height
-    fun getResolutionFromString(resolution: String): Pair<Int, Int> {
-        return when (resolution) {
-            "360p" -> Pair(480, 360)
+    fun getAdjustedResolution(resolution: String, screenWidth: Int, screenHeight: Int): Pair<Int, Int> {
+        val (baseHeight, baseWidth) = when (resolution) {
+            "360p" -> Pair(640, 360)
             "480p" -> Pair(854, 480)
-            "540p" -> Pair(960, 540)
-            "640p" -> Pair(640, 360)
             "720p" -> Pair(1280, 720)
             "1080p" -> Pair(1920, 1080)
-            else -> Pair(1280, 720) // Default to 720p if unknown
+            else -> Pair(1280, 720)
+        }
+
+//        return Pair(baseWidth, baseHeight)
+
+        // Calculate aspect ratios
+        val screenAspectRatio = screenWidth.toFloat() / screenHeight
+        val resolutionAspectRatio = baseWidth.toFloat() / baseHeight
+
+        Log.e("myTag", "screenAspectRatio $screenAspectRatio, resolutionAspectRatio $resolutionAspectRatio")
+
+        // Adjust the resolution to fit the screen aspect ratio
+        return if (screenAspectRatio > resolutionAspectRatio) {
+            // Scale based on height
+            val adjustedWidth = (baseHeight * screenAspectRatio).toInt()
+            Pair(adjustedWidth, baseHeight)
+        } else {
+            // Scale based on width
+            val adjustedHeight = (baseWidth / screenAspectRatio).toInt()
+            Pair(baseWidth, adjustedHeight)
         }
     }
 

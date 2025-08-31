@@ -15,8 +15,8 @@ android {
         applicationId = "com.droidnova.screenrecorder"
         minSdk = 24
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.002"
+        versionCode = 4
+        versionName = "0.004"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,4 +62,7 @@ dependencies {
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-crashlytics")
     implementation("com.google.firebase:firebase-analytics")
+
+    //admob
+    implementation("com.google.android.gms:play-services-ads:23.2.0")
 }

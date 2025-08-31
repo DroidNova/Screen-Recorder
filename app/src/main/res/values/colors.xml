@@ -9,6 +9,7 @@
     <color name="textColorSecondary">#757575</color>
     <color name="backgroundColor">#FFFFFF</color>
     <color name="white">#ffffff</color>
+    <color name="black">#000000</color>
     <color name="card_stroke_color">#F1EEEE</color>
 
     <!-- Light theme colors -->
@@ -90,8 +91,8 @@
     <color name="cardSelectedBackgroundColor">#CDDFCF</color>
     <color name="selectedPrimaryTextColor">#000000</color>
     <color name="selectedSecondaryTextColor">#000000</color>"
-
-    <color name="outline_color">#388E3C</color>
+    <color name="cardColoredStrokeColor">#A5D6A7</color>
+    <color name="transparent_black">#C9000000</color>
 
 
 </resources>

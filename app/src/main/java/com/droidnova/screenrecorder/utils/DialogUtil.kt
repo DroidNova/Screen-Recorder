@@ -82,8 +82,6 @@ object DialogUtil {
         val layoutToComponentsMap = hashMapOf(
             binding.ll360p to Pair(binding.radio360p, binding.text360p),
             binding.ll480p to Pair(binding.radio480p, binding.text480p),
-            binding.ll540p to Pair(binding.radio540p, binding.text540p),
-            binding.ll640p to Pair(binding.radio640p, binding.text640p),
             binding.ll720p to Pair(binding.radio720p, binding.text720p),
             binding.ll1080p to Pair(binding.radio1080p, binding.text1080p)
         )

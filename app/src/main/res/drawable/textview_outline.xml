@@ -6,7 +6,7 @@
     <!-- Define the stroke for the outline -->
     <stroke
         android:width="2dp"
-        android:color="@color/outline_color"/>
+        android:color="@color/md_theme_dark_outline"/>
 
     <!-- Optional: Define the corner radius if you want rounded corners -->
     <corners android:radius="8dp"/>

@@ -50,50 +50,6 @@
     </LinearLayout>
 
     <LinearLayout
-        android:id="@+id/ll_540p"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:tag="540p"
-        android:orientation="horizontal">
-
-        <com.google.android.material.radiobutton.MaterialRadioButton
-            android:id="@+id/radio_540p"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:clickable="false"
-            android:text="540p" />
-
-        <TextView
-            android:id="@+id/text_540p"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="qHD" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/ll_640p"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:tag="640p"
-        android:orientation="horizontal">
-
-        <com.google.android.material.radiobutton.MaterialRadioButton
-            android:id="@+id/radio_640p"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:clickable="false"
-            android:text="640p" />
-
-        <TextView
-            android:id="@+id/text_640p"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Wide VGA" />
-    </LinearLayout>
-
-    <LinearLayout
         android:id="@+id/ll_720p"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

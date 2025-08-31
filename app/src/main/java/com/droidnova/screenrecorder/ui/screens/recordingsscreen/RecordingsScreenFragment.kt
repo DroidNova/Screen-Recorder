@@ -324,18 +324,13 @@ class RecordingsScreenFragment : Fragment() {
                 setDataAndType(fileUri, mimeType)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-
-            Log.d("RecordingsScreenFragment", "Playing media file: ${mediaFile.name}")
-
             if (intent.resolveActivity(requireActivity().packageManager) != null) {
                 startActivity(intent)
             } else {
-                Log.e("RecordingsScreenFragment", "No app available to handle media playback.")
                 context?.showToast("No app available. Try downloading a suitable app to play this file.")
             }
 
         } catch (e: IllegalArgumentException) {
-            Log.e("RecordingsScreenFragment", "Failed to play media file: ${mediaFile.name}", e)
             context?.showToast("Failed to play the file. Please try downloading it first.")
         }
     }

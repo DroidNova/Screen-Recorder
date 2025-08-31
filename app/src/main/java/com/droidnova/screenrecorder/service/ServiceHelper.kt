@@ -181,7 +181,14 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
             // Map preferences to actual MediaRecorder settings
             val bitrate = MediaSettingsUtil.getBitRateFromQuality(selectedQuality)
-            val (videoHeight, videoWidth) = MediaSettingsUtil.getResolutionFromString(selectedResolution)
+            val displayMetrics = Resources.getSystem().displayMetrics
+            val screenWidth = displayMetrics.widthPixels
+            val screenHeight = displayMetrics.heightPixels
+            Log.e("myTag before ","screenWidth $screenWidth, screenHeight $screenHeight")
+
+            val (videoWidth, videoHeight) = MediaSettingsUtil.getAdjustedResolution(selectedResolution, screenWidth, screenHeight)
+            Log.e("myTag after","screenWidth $videoWidth, screenHeight $videoHeight")
+
             val fps = MediaSettingsUtil.getFpsFromString(selectedFps)
 
             // Set audio source to microphone
@@ -214,48 +221,17 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     }
 
 
-    private fun setupAudioCapture() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val audioPlaybackCaptureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
-                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
-                .addMatchingUsage(AudioAttributes.USAGE_GAME)
-                .build()
-
-            if (ActivityCompat.checkSelfPermission(service, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                return
-            }
-
-            val bufferSize = AudioRecord.getMinBufferSize(44100, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
-
-            audioRecord = AudioRecord.Builder()
-                .setAudioPlaybackCaptureConfig(audioPlaybackCaptureConfig)
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(44100)
-                        .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
-                        .build()
-                )
-                .setBufferSizeInBytes(bufferSize)
-                .build()
-
-            audioRecord?.startRecording()
-
-            audioPath = FileUtil.createAudioFile(service).absolutePath
-            audioRecord?.let { record ->
-                audioPath?.let { path ->
-                    EncodingUtil.startRealTimeEncoding(record, path)
-                }
-            }
-        } else {
-            Log.e(ScreenRecordingService.TAG, "System audio capture is not supported below Android 10")
-        }
-    }
-
     private fun setupVirtualDisplay() {
         val displayMetrics = Resources.getSystem().displayMetrics
+        val selectedResolution = PreferenceUtil.selectedVideoResolution
+        val (videoWidth, videoHeight) = MediaSettingsUtil.getAdjustedResolution(
+            selectedResolution,
+            displayMetrics.widthPixels,
+            displayMetrics.heightPixels
+        )
 
-        Log.e(ScreenRecordingService.TAG,"width ${displayMetrics.widthPixels} height ${displayMetrics.heightPixels}")
+        Log.e(ScreenRecordingService.TAG, "VirtualDisplay width: $videoWidth, height: $videoHeight")
+
         try {
             virtualDisplay = mediaProjection.createVirtualDisplay(
                 "ScreenRecording",
@@ -272,6 +248,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
             stopScreenRecording()
         }
     }
+
 
     fun stopScreenRecording() {
         if (!service.isServiceRunning) return
@@ -337,6 +314,46 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     private fun stopForegroundService() {
         service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
         service.stopSelf()
+    }
+
+
+
+    private fun setupAudioCapture() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val audioPlaybackCaptureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .build()
+
+            if (ActivityCompat.checkSelfPermission(service, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                return
+            }
+
+            val bufferSize = AudioRecord.getMinBufferSize(44100, AudioFormat.CHANNEL_IN_STEREO, AudioFormat.ENCODING_PCM_16BIT)
+
+            audioRecord = AudioRecord.Builder()
+                .setAudioPlaybackCaptureConfig(audioPlaybackCaptureConfig)
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(44100)
+                        .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                        .build()
+                )
+                .setBufferSizeInBytes(bufferSize)
+                .build()
+
+            audioRecord?.startRecording()
+
+            audioPath = FileUtil.createAudioFile(service).absolutePath
+            audioRecord?.let { record ->
+                audioPath?.let { path ->
+                    EncodingUtil.startRealTimeEncoding(record, path)
+                }
+            }
+        } else {
+            Log.e(ScreenRecordingService.TAG, "System audio capture is not supported below Android 10")
+        }
     }
 
     private fun updateNotification() {

@@ -1,6 +1,9 @@
 package com.droidnova.screenrecorder
 
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.ViewGroup
 import android.widget.Button
 import androidx.activity.enableEdgeToEdge
@@ -11,6 +14,13 @@ import androidx.navigation.fragment.NavHostFragment
 import androidx.navigation.ui.NavigationUI
 import com.droidnova.screenrecorder.databinding.ActivityMainBinding
 import com.droidnova.screenrecorder.utils.PreferenceUtil
+import com.google.android.gms.ads.AdListener
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.LoadAdError
+import com.google.android.gms.ads.MobileAds
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 
 class MainActivity : AppCompatActivity() {
     private var binding: ActivityMainBinding? = null
@@ -22,18 +32,43 @@ class MainActivity : AppCompatActivity() {
 
         PreferenceUtil.init(this)
 
-        val crashButton = Button(this)
-        crashButton.text = "Test Crash"
-        crashButton.setOnClickListener {
-            throw RuntimeException("Test Crash") // Force a crash
-        }
-
-        addContentView(crashButton, ViewGroup.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT))
-
         setUpNavigation()
+        MobileAds.initialize(this@MainActivity) { }
+        initAdview()
 
+    }
+
+    private fun initAdview() {
+        val adView = AdView(this).apply {
+            adUnitId = "ca-app-pub-4788231589271799/2948796263"
+//            adUnitId = "ca-app-pub-3940256099942544/9214589741"
+        }
+        adView.setAdSize(AdSize.BANNER)
+        binding?.bannerAdView?.addView(adView)
+        try {
+            loadAd(adView)
+        }catch (e:Exception){
+            FirebaseCrashlytics.getInstance().recordException(e)
+        }
+    }
+
+    private fun loadAd(adView: AdView, retryCount: Int = 3) {
+        if (retryCount <= 0) return
+
+        val adRequest = AdRequest.Builder().build()
+        adView.loadAd(adRequest)
+        adView.adListener = object: AdListener() {
+            override fun onAdFailedToLoad(adError : LoadAdError) {
+                // Code to be executed when an ad request fails.
+                if (retryCount > 0) {
+                    Log.d("myTag", "Retrying to load ad...")
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        loadAd(adView,retryCount - 1)
+                    }, 5000L)
+                }
+
+            }
+        }
     }
 
     private fun setUpNavigation() {
