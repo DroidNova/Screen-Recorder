@@ -9,12 +9,12 @@ plugins {
 
 android {
     namespace = "com.droidnova.screenrecorder"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.droidnova.screenrecorder"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 4
         versionName = "0.004"
 

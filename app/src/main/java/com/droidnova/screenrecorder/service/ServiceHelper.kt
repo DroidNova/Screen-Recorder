@@ -168,8 +168,14 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     }
 
     private fun setupMediaRecorder() {
+        if (ActivityCompat.checkSelfPermission(service, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Log.e(ScreenRecordingService.TAG, "RECORD_AUDIO permission not granted")
+            stopScreenRecording()
+            return
+        }
+
         mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(service)
+            MediaRecorder(service.applicationContext)
         } else {
             MediaRecorder()
         }.apply {
