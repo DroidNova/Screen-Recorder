@@ -47,7 +47,7 @@ import kotlinx.coroutines.launch
 class ServiceHelper(private val service: ScreenRecordingService) {
 
     private lateinit var mediaProjectionManager: MediaProjectionManager
-    private lateinit var mediaProjection: MediaProjection
+    private var mediaProjection: MediaProjection? = null
     private lateinit var virtualDisplay: VirtualDisplay
     private lateinit var mediaRecorder: MediaRecorder
     private var windowManager: WindowManager? = null
@@ -106,8 +106,14 @@ class ServiceHelper(private val service: ScreenRecordingService) {
     }
 
     private fun startScreenRecording(resultCode: Int, data: Intent) {
-        mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data)
-        mediaProjection.registerCallback(object : MediaProjection.Callback() {
+        val projection = mediaProjectionManager.getMediaProjection(resultCode, data)
+        if (projection == null) {
+            Log.e(ScreenRecordingService.TAG, "Failed to obtain MediaProjection")
+            stopScreenRecording()
+            return
+        }
+        mediaProjection = projection
+        projection.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 stopScreenRecording()
             }
@@ -238,8 +244,14 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
         Log.e(ScreenRecordingService.TAG, "VirtualDisplay width: $videoWidth, height: $videoHeight")
 
+        val projection = mediaProjection ?: run {
+            Log.e(ScreenRecordingService.TAG, "MediaProjection is null; cannot create VirtualDisplay")
+            stopScreenRecording()
+            return
+        }
+
         try {
-            virtualDisplay = mediaProjection.createVirtualDisplay(
+            virtualDisplay = projection.createVirtualDisplay(
                 "ScreenRecording",
                 displayMetrics.widthPixels,
                 displayMetrics.heightPixels,
@@ -271,7 +283,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         }
 
         virtualDisplay.release()
-        mediaProjection.stop()
+        mediaProjection?.stop()
         service.callback?.onRecordingStopped()
         recordingStartTime = 0
         service.callback?.onRecordingTimeUpdate("00:00")
@@ -326,7 +338,8 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
     private fun setupAudioCapture() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val audioPlaybackCaptureConfig = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+            val projection = mediaProjection ?: return
+            val audioPlaybackCaptureConfig = AudioPlaybackCaptureConfiguration.Builder(projection)
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                 .addMatchingUsage(AudioAttributes.USAGE_GAME)
                 .build()
