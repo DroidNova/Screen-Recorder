@@ -193,9 +193,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
             // Map preferences to actual MediaRecorder settings
             val bitrate = MediaSettingsUtil.getBitRateFromQuality(selectedQuality)
-            val displayMetrics = Resources.getSystem().displayMetrics
-            val screenWidth = displayMetrics.widthPixels
-            val screenHeight = displayMetrics.heightPixels
+            val (screenWidth, screenHeight) = getScreenSize()
             Log.e("myTag before ","screenWidth $screenWidth, screenHeight $screenHeight")
 
             val (videoWidth, videoHeight) = MediaSettingsUtil.getAdjustedResolution(selectedResolution, screenWidth, screenHeight)
@@ -234,12 +232,12 @@ class ServiceHelper(private val service: ScreenRecordingService) {
 
 
     private fun setupVirtualDisplay() {
-        val displayMetrics = Resources.getSystem().displayMetrics
+        val (screenWidth, screenHeight) = getScreenSize()
         val selectedResolution = PreferenceUtil.selectedVideoResolution
         val (videoWidth, videoHeight) = MediaSettingsUtil.getAdjustedResolution(
             selectedResolution,
-            displayMetrics.widthPixels,
-            displayMetrics.heightPixels
+            screenWidth,
+            screenHeight
         )
 
         Log.e(ScreenRecordingService.TAG, "VirtualDisplay width: $videoWidth, height: $videoHeight")
@@ -255,7 +253,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
                 "ScreenRecording",
                 videoWidth,
                 videoHeight,
-                displayMetrics.densityDpi,
+                service.resources.displayMetrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 surface,
                 null,
@@ -272,6 +270,19 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         }
     }
 
+
+    private fun getScreenSize(): Pair<Int, Int> {
+        val wm = windowManager ?: service.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val metrics = wm.currentWindowMetrics
+            Pair(metrics.bounds.width(), metrics.bounds.height())
+        } else {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealMetrics(metrics)
+            Pair(metrics.widthPixels, metrics.heightPixels)
+        }
+    }
 
     fun stopScreenRecording() {
         if (!service.isServiceRunning) return

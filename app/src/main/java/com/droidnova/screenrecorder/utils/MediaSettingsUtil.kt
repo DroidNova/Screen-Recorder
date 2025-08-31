@@ -17,28 +17,10 @@ object MediaSettingsUtil {
 
     // Convert resolution string to width and height
     fun getAdjustedResolution(resolution: String, screenWidth: Int, screenHeight: Int): Pair<Int, Int> {
-        // Base resolutions are defined in landscape orientation (width x height)
-        val (baseWidth, baseHeight) = when (resolution) {
-            "360p" -> Pair(640, 360)
-            "480p" -> Pair(854, 480)
-            "720p" -> Pair(1280, 720)
-            "1080p" -> Pair(1920, 1080)
-            else -> Pair(1280, 720)
-        }
-
-        val screenAspectRatio = screenWidth.toFloat() / screenHeight
-
-        return if (screenAspectRatio >= 1f) {
-            // Landscape orientation – keep the base height and scale width to match
-            val height = baseHeight
-            val width = (height * screenAspectRatio).toInt()
-            Pair(width, height)
-        } else {
-            // Portrait orientation – keep the base height as the width and scale height
-            val width = baseHeight
-            val height = (width / screenAspectRatio).toInt()
-            Pair(width, height)
-        }
+        // Using the device's full width and height prevents letterboxing in the
+        // recorded video. The selected resolution parameter is retained for
+        // future use but currently ignored.
+        return Pair(screenWidth, screenHeight)
     }
 
     // Convert FPS string to integer
