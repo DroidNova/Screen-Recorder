@@ -251,7 +251,7 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         }
 
         try {
-            virtualDisplay = projection.createVirtualDisplay(
+            val vd = projection.createVirtualDisplay(
                 "ScreenRecording",
                 displayMetrics.widthPixels,
                 displayMetrics.heightPixels,
@@ -260,7 +260,12 @@ class ServiceHelper(private val service: ScreenRecordingService) {
                 surface,
                 null,
                 null
-            )
+            ) ?: run {
+                Log.e(ScreenRecordingService.TAG, "Failed to create VirtualDisplay")
+                stopScreenRecording()
+                return
+            }
+            virtualDisplay = vd
         } catch (e: Exception) {
             Log.e(ScreenRecordingService.TAG, "Failed to create VirtualDisplay", e)
             stopScreenRecording()
