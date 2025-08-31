@@ -1,7 +1,5 @@
 package com.droidnova.screenrecorder.utils
 
-import android.util.Log
-
 object MediaSettingsUtil {
 
     // Convert quality string to bitrate
@@ -19,7 +17,8 @@ object MediaSettingsUtil {
 
     // Convert resolution string to width and height
     fun getAdjustedResolution(resolution: String, screenWidth: Int, screenHeight: Int): Pair<Int, Int> {
-        val (baseHeight, baseWidth) = when (resolution) {
+        // Base resolutions are defined in landscape orientation (width x height)
+        val (baseWidth, baseHeight) = when (resolution) {
             "360p" -> Pair(640, 360)
             "480p" -> Pair(854, 480)
             "720p" -> Pair(1280, 720)
@@ -27,23 +26,18 @@ object MediaSettingsUtil {
             else -> Pair(1280, 720)
         }
 
-//        return Pair(baseWidth, baseHeight)
-
-        // Calculate aspect ratios
         val screenAspectRatio = screenWidth.toFloat() / screenHeight
-        val resolutionAspectRatio = baseWidth.toFloat() / baseHeight
 
-        Log.e("myTag", "screenAspectRatio $screenAspectRatio, resolutionAspectRatio $resolutionAspectRatio")
-
-        // Adjust the resolution to fit the screen aspect ratio
-        return if (screenAspectRatio > resolutionAspectRatio) {
-            // Scale based on height
-            val adjustedWidth = (baseHeight * screenAspectRatio).toInt()
-            Pair(adjustedWidth, baseHeight)
+        return if (screenAspectRatio >= 1f) {
+            // Landscape orientation – keep the base height and scale width to match
+            val height = baseHeight
+            val width = (height * screenAspectRatio).toInt()
+            Pair(width, height)
         } else {
-            // Scale based on width
-            val adjustedHeight = (baseWidth / screenAspectRatio).toInt()
-            Pair(baseWidth, adjustedHeight)
+            // Portrait orientation – keep the base height as the width and scale height
+            val width = baseHeight
+            val height = (width / screenAspectRatio).toInt()
+            Pair(width, height)
         }
     }
 
