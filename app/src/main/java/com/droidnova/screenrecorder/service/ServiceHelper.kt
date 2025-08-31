@@ -253,8 +253,8 @@ class ServiceHelper(private val service: ScreenRecordingService) {
         try {
             val vd = projection.createVirtualDisplay(
                 "ScreenRecording",
-                displayMetrics.widthPixels,
-                displayMetrics.heightPixels,
+                videoWidth,
+                videoHeight,
                 displayMetrics.densityDpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 surface,
