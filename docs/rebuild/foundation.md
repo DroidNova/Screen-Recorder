@@ -64,6 +64,32 @@ Room, Media3, CameraX, WorkManager, Firebase, advertising, Billing, DataStore,
 recording libraries, migration code, navigation, and recording capabilities are
 intentionally deferred.
 
+Android Auto Backup is disabled for the rebuilt application. Recordings and
+legacy preferences, including potentially sensitive abandoned values, must not
+be restored implicitly through platform backup. A future milestone will handle
+eligible legacy data through an explicit in-place migration instead.
+
+## Owner-run Windows validation
+
+The following results were supplied by the owner and were not run by Codex in
+this workspace:
+
+- Operating system: Windows 11.
+- Gradle wrapper: 8.13; command-line Gradle launcher JVM: Oracle JDK 22.
+- `.\gradlew.bat :app:assembleDebug`: **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:lintDebug`: **BUILD SUCCESSFUL**.
+- `.\gradlew.bat :app:assembleRelease`: **BUILD SUCCESSFUL**.
+- Hilt-generated Java emitted a non-blocking deprecated-API compiler note.
+- `:app:testDebugUnitTest` has not yet been verified by the owner.
+
+Android Studio Run initially failed before application execution with
+`java.lang.IllegalArgumentException: 25.0.2` while Gradle and the Kotlin DSL were
+being initialized. Android Studio was using Java 25.0.2, unlike the successful
+command-line build. The required local resolution is to configure Android
+Studio's Gradle JDK to JDK 17; no machine-specific JDK path belongs in the
+repository. A physical-device or emulator launch remains a manual acceptance
+check.
+
 ## Verification
 
 The intended verification commands are:
