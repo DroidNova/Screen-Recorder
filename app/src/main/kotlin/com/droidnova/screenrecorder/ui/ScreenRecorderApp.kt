@@ -1,49 +1,93 @@
 package com.droidnova.screenrecorder.ui
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import com.droidnova.screenrecorder.R
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.droidnova.screenrecorder.feature.home.HomeScreen
+import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
+import com.droidnova.screenrecorder.feature.settings.SettingsScreen
+import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderApp() {
     ScreenRecorderTheme {
-        Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-            FoundationScreen(modifier = Modifier.padding(innerPadding))
+        val navController = rememberNavController()
+        val backStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
+        val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
+
+        NavigationSuiteScaffold(
+            modifier = Modifier.fillMaxSize(),
+            navigationSuiteItems = {
+                TopLevelDestination.entries.forEach { destination ->
+                    val selected = currentRoute == destination.route
+                    item(
+                        selected = selected,
+                        onClick = {
+                            if (!selected) navController.navigate(destination.route) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = {
+                            androidx.compose.material3.Icon(
+                                painter = painterResource(if (selected) destination.selectedIcon else destination.unselectedIcon),
+                                contentDescription = null,
+                            )
+                        },
+                        label = { Text(stringResource(destination.label)) },
+                    )
+                }
+            },
+        ) {
+            androidx.compose.material3.Scaffold(
+                modifier = Modifier.safeDrawingPadding(),
+                topBar = { TopAppBar(title = { Text(stringResource(current.label)) }) },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
+                    NavHost(
+                        navController = navController,
+                        startDestination = TopLevelDestination.Home.route,
+                        modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
+                    ) {
+                        composable(TopLevelDestination.Home.route) { HomeScreen() }
+                        composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
+                        composable(TopLevelDestination.Settings.route) { SettingsScreen() }
+                    }
+                }
+            }
         }
     }
 }
 
+@Preview(name = "Compact", widthDp = 360, heightDp = 800)
+@Preview(name = "Landscape medium", widthDp = 700, heightDp = 400)
+@Preview(name = "Expanded", widthDp = 1200, heightDp = 800)
 @Composable
-private fun FoundationScreen(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineMedium,
-        )
-        Text(
-            text = stringResource(R.string.foundation_subtitle),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun FoundationScreenPreview() {
+private fun AppShellPreview() {
     ScreenRecorderApp()
 }
