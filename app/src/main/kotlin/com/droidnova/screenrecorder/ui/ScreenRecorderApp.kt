@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -28,15 +29,26 @@ import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
+import com.droidnova.screenrecorder.domain.recording.RecordingState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScreenRecorderApp() {
+fun ScreenRecorderApp(
+    recordingState: RecordingState = RecordingState.Idle,
+    elapsedSeconds: Long = 0,
+    statusMessage: Int? = null,
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    onTerminalStateShown: () -> Unit = {},
+) {
     ScreenRecorderTheme {
         val navController = rememberNavController()
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
         val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
+        LaunchedEffect(recordingState) {
+            if (recordingState is RecordingState.Completed || recordingState is RecordingState.Failed) onTerminalStateShown()
+        }
 
         NavigationSuiteScaffold(
             modifier = Modifier.fillMaxSize(),
@@ -74,7 +86,15 @@ fun ScreenRecorderApp() {
                         startDestination = TopLevelDestination.Home.route,
                         modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
                     ) {
-                        composable(TopLevelDestination.Home.route) { HomeScreen() }
+                        composable(TopLevelDestination.Home.route) {
+                            HomeScreen(
+                                recordingState = recordingState,
+                                elapsedSeconds = elapsedSeconds,
+                                statusMessage = statusMessage?.let { stringResource(it) },
+                                onStartRecording = onStartRecording,
+                                onStopRecording = onStopRecording,
+                            )
+                        }
                         composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
                         composable(TopLevelDestination.Settings.route) { SettingsScreen() }
                     }

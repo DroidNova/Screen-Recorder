@@ -1,6 +1,6 @@
 package com.droidnova.screenrecorder.ui
 
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -15,11 +15,11 @@ class ScreenRecorderAppTest {
 
     private fun launch() = composeRule.setContent { ScreenRecorderApp() }
 
-    @Test fun startsOnHomeWithSelectedNavigationAndDisabledRecording() {
+    @Test fun startsOnHomeWithSelectedNavigationAndEnabledRecording() {
         launch()
         composeRule.onNodeWithText("Ready when recording arrives").assertIsDisplayed()
         composeRule.onNodeWithText("Home").assertIsSelected()
-        composeRule.onNodeWithText("Start recording").assertIsNotEnabled()
+        composeRule.onNodeWithText("Start recording").assertIsEnabled()
     }
 
     @Test fun navigatesAcrossEveryTopLevelDestination() {

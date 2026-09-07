@@ -23,9 +23,17 @@ import androidx.compose.ui.tooling.preview.Preview
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.ui.theme.Spacing
+import com.droidnova.screenrecorder.domain.recording.RecordingState
 
 @Composable
-fun HomeScreen(modifier: Modifier = Modifier) {
+fun HomeScreen(
+    recordingState: RecordingState = RecordingState.Idle,
+    elapsedSeconds: Long = 0,
+    statusMessage: String? = null,
+    onStartRecording: () -> Unit = {},
+    onStopRecording: () -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page),
         verticalArrangement = Arrangement.spacedBy(Spacing.Section),
@@ -43,12 +51,29 @@ fun HomeScreen(modifier: Modifier = Modifier) {
                 SummaryRow(R.string.storage, R.string.app_storage)
             }
         }
+        if (recordingState is RecordingState.Recording) {
+            Text(
+                stringResource(R.string.elapsed_time_format, elapsedSeconds / 60, elapsedSeconds % 60),
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Small), modifier = Modifier.fillMaxWidth()) {
-            Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
+            val control = recordingState.availableRecordingControl()
+            val idle = control == RecordingControl.Start
+            val recording = control == RecordingControl.Stop
+            Button(
+                onClick = if (recording) onStopRecording else onStartRecording,
+                enabled = idle || recording,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
                 Icon(painterResource(R.drawable.ic_record), contentDescription = null)
-                Text(stringResource(R.string.start_recording), modifier = Modifier.padding(start = Spacing.Small))
+                Text(
+                    stringResource(if (recording) R.string.stop_recording else if (idle) R.string.start_recording else R.string.recording_preparing),
+                    modifier = Modifier.padding(start = Spacing.Small),
+                )
             }
-            Text(stringResource(R.string.recording_unavailable), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            statusMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
