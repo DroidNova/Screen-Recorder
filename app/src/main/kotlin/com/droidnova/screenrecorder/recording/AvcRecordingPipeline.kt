@@ -144,7 +144,7 @@ internal class AvcRecordingPipeline(
                 runCatching {
                     val capabilities = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
                     if (MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface !in capabilities.colorFormats) return@runCatching null
-                    val video = capabilities.videoCapabilities
+                    val video = capabilities.videoCapabilities ?: return@runCatching null
                     EncoderCandidate(
                         name = info.name,
                         hardwareAccelerated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isHardwareAccelerated else !isKnownSoftwareCodec(info.name),

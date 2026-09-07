@@ -22,7 +22,7 @@ Authoritative references for owner review:
 | Component | Starting repository value | Final value |
 |---|---:|---:|
 | Android Gradle Plugin | 8.13.2 | 9.3.2 |
-| Gradle wrapper distribution | 8.13 | 9.5 |
+| Gradle wrapper distribution | 8.13 | 9.5.0 |
 | Compile SDK | 36 | 37 |
 | Target SDK | 36 | 37 |
 | Minimum SDK | 24 | 24 |
@@ -34,7 +34,7 @@ Authoritative references for owner review:
 | Compose BOM | 2025.12.01 | 2025.12.01 |
 | Navigation Compose | 2.9.8 | 2.9.8 |
 
-AGP 9.3.2 is the requested patched AGP 9.3 release with API 37 support and the documented JDK 17 lint correction. Gradle 9.5 is its required wrapper line. No Build Tools version is pinned; AGP may select its supported default.
+AGP 9.3.2 is the requested patched AGP 9.3 release with API 37 support and the documented JDK 17 lint correction. Gradle 9.5.0 is its required wrapper version. No Build Tools version is pinned; AGP may select its supported default.
 
 ## AGP 9 DSL and built-in Kotlin
 
@@ -83,7 +83,13 @@ No AndroidX, Compose BOM, Navigation, Material 3 Adaptive, or test dependency wa
 
 ## Codex validation results
 
-All Gradle commands used the available JDK 17. `./gradlew --version`, `:app:assembleDebug`, `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleRelease`, `:app:bundleRelease`, and `:app:dependencies` each exited 1 before Gradle launched because the environment proxy rejected `gradle-9.5-bin.zip` with `HTTP/1.1 403 Forbidden`. No Gradle task is claimed to have passed. Static diff, manifest, permission, plugin-remnant, behavior-audit, and repository-status checks are reported in the completion response.
+All Gradle commands used the available JDK 17. Earlier migration validation identified
+that `gradle-9.5-bin.zip` does not exist, and the wrapper now points to the valid
+`gradle-9.5.0-bin.zip` distribution. Codex then reran `./gradlew --version`,
+`:app:assembleDebug`, `:app:testDebugUnitTest`, `:app:lintDebug`,
+`:app:assembleRelease`, `:app:bundleRelease`, and `:app:dependencies`; each exited 1
+before Gradle launched because the environment proxy rejected the valid distribution
+download with `HTTP/1.1 403 Forbidden`. No Gradle task is claimed to have passed.
 
 The wrapper JAR was not fabricated or replaced because the distribution could not be downloaded to run the official `wrapper` task. The existing wrapper bootstrap JAR and scripts are retained; the wrapper metadata points to the required binary distribution. No checksum was added because its official value could not be retrieved and must not be guessed.
 
