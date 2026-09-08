@@ -30,6 +30,7 @@ import com.droidnova.screenrecorder.feature.settings.SettingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.domain.recording.RecordingState
+import com.droidnova.screenrecorder.domain.recording.AudioMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -40,6 +41,8 @@ fun ScreenRecorderApp(
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     onTerminalStateShown: () -> Unit = {},
+    audioMode: AudioMode = AudioMode.None,
+    onAudioModeSelected: (AudioMode) -> Unit = {},
 ) {
     ScreenRecorderTheme {
         val navController = rememberNavController()
@@ -96,7 +99,13 @@ fun ScreenRecorderApp(
                             )
                         }
                         composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
-                        composable(TopLevelDestination.Settings.route) { SettingsScreen() }
+                        composable(TopLevelDestination.Settings.route) {
+                            SettingsScreen(
+                                audioMode = audioMode,
+                                audioModeEnabled = recordingState == RecordingState.Idle,
+                                onAudioModeSelected = onAudioModeSelected,
+                            )
+                        }
                     }
                 }
             }

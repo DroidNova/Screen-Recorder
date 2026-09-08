@@ -1,5 +1,6 @@
 package com.droidnova.screenrecorder.recording
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Binder
@@ -20,10 +22,12 @@ import androidx.core.app.NotificationCompat
 import com.droidnova.screenrecorder.MainActivity
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.domain.recording.FailureStage
+import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.domain.recording.RecordingCommand
 import com.droidnova.screenrecorder.domain.recording.RecordingEvent
 import com.droidnova.screenrecorder.domain.recording.RecordingFailure
 import com.droidnova.screenrecorder.domain.recording.RecordingInput
+import com.droidnova.screenrecorder.domain.recording.RequiredPermission
 import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.RecordingStateMachine
 import com.droidnova.screenrecorder.domain.recording.StopReason
@@ -83,29 +87,38 @@ class ScreenRecordingService : Service() {
         val width = intent.getIntExtra(EXTRA_SOURCE_WIDTH, 0)
         val height = intent.getIntExtra(EXTRA_SOURCE_HEIGHT, 0)
         val densityDpi = intent.getIntExtra(EXTRA_DENSITY_DPI, 0)
-        if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0) {
+        val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE)?.let { value ->
+            AudioMode.entries.firstOrNull { it.name == value }
+        }
+        if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0 ||
+            audioMode != AudioMode.None && audioMode != AudioMode.Microphone
+        ) {
             stopIfIdle()
             return
         }
         synchronized(transitionLock) {
             if (_runtime.value.state != RecordingState.Idle) return
             cleanupStarted.set(false)
-            applyTransitionLocked(RecordingCommand.Start(Milestone5Settings.default))
+            applyTransitionLocked(RecordingCommand.Start(Milestone5Settings.default.copy(audioMode = requireNotNull(audioMode))))
+        }
+        if (audioMode == AudioMode.Microphone && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            terminalFailure(RecordingFailure.RequiredPermissionDenied(RequiredPermission.Microphone))
+            return
         }
         try {
-            promoteToForeground()
+            promoteToForeground(requireNotNull(audioMode))
         } catch (_: RuntimeException) {
             terminalFailure(RecordingFailure.UnexpectedInternalFailure)
             return
         }
-        encoderExecutor.execute { runSession(resultCode, consentData, width, height, densityDpi) }
+        encoderExecutor.execute { runSession(resultCode, consentData, width, height, densityDpi, requireNotNull(audioMode)) }
     }
 
     private fun stopIfIdle() {
         if (_runtime.value.state == RecordingState.Idle) stopSelf()
     }
 
-    private fun runSession(resultCode: Int, consentData: Intent, width: Int, height: Int, densityDpi: Int) {
+    private fun runSession(resultCode: Int, consentData: Intent, width: Int, height: Int, densityDpi: Int, audioMode: AudioMode) {
         try {
             val manager = getSystemService(MediaProjectionManager::class.java)
             val projection = manager.getMediaProjection(resultCode, consentData)
@@ -116,7 +129,7 @@ class ScreenRecordingService : Service() {
                 try { projection.stop() } catch (_: RuntimeException) { }
                 throw RecordingPipelineException(RecordingFailure.StorageFailure)
             }
-            val ownedPipeline = AvcRecordingPipeline(projection, width, height, densityDpi, output)
+            val ownedPipeline = AvcRecordingPipeline(projection, width, height, densityDpi, audioMode, output)
             pipeline = ownedPipeline
             ownedPipeline.start(mainHandler, projectionCallback)
             dispatch(RecordingEvent.PreparationReady)
@@ -208,14 +221,20 @@ class ScreenRecordingService : Service() {
         }
     }
 
-    private fun promoteToForeground() {
+    private fun promoteToForeground(audioMode: AudioMode) {
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, getString(R.string.recording_channel_name), NotificationManager.IMPORTANCE_LOW))
         }
         val notification = buildNotification(_runtime.value.state)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            val serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && audioMode == AudioMode.Microphone) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                } else {
+                    0
+                }
+            startForeground(NOTIFICATION_ID, notification, serviceType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -253,7 +272,7 @@ class ScreenRecordingService : Service() {
         val ownedPipeline = pipeline
         if (ownedPipeline != null && !cleanupStarted.get()) {
             requestStop(StopReason.ApplicationShutdown)
-            finalizeSession(ownedPipeline, null, RecordingFailure.FinalizationFailure)
+            ownedPipeline.requestStop()
         }
         encoderExecutor.shutdown()
         super.onDestroy()
@@ -267,14 +286,24 @@ class ScreenRecordingService : Service() {
         private const val EXTRA_SOURCE_WIDTH = "source_width"
         private const val EXTRA_SOURCE_HEIGHT = "source_height"
         private const val EXTRA_DENSITY_DPI = "density_dpi"
+        private const val EXTRA_AUDIO_MODE = "audio_mode"
         private const val CHANNEL_ID = "screen_recording"
         private const val NOTIFICATION_ID = 41
         private val filenameSequence = AtomicLong()
 
-        fun startIntent(context: Context, resultCode: Int, data: Intent, width: Int, height: Int, densityDpi: Int) =
+        fun startIntent(
+            context: Context,
+            resultCode: Int,
+            data: Intent,
+            width: Int,
+            height: Int,
+            densityDpi: Int,
+            audioMode: AudioMode,
+        ) =
             Intent(context, ScreenRecordingService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode).putExtra(EXTRA_CONSENT_DATA, data)
                 .putExtra(EXTRA_SOURCE_WIDTH, width).putExtra(EXTRA_SOURCE_HEIGHT, height).putExtra(EXTRA_DENSITY_DPI, densityDpi)
+                .putExtra(EXTRA_AUDIO_MODE, audioMode.name)
 
         fun stopIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_STOP)
     }

@@ -20,24 +20,35 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.droidnova.screenrecorder.domain.recording.RecordingState
+import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot
 import com.droidnova.screenrecorder.recording.ScreenRecordingService
 import com.droidnova.screenrecorder.ui.ScreenRecorderApp
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private var projectionConsentPending = false
     private var notificationPermissionPending = false
     private var notificationPermissionRequested = false
+    private var microphonePermissionPending = false
+    private var microphonePermissionRequested = false
     private var backgroundWhenRecordingStarts = false
     private val showNotificationPermissionExplanation = mutableStateOf(false)
+    private val showMicrophonePermissionExplanation = mutableStateOf(false)
+    private val _selectedAudioMode = MutableStateFlow(AudioMode.None)
+    private val selectedAudioMode = _selectedAudioMode.asStateFlow()
+    private var requestedSessionAudioMode = AudioMode.None
     private val statusMessage = mutableStateOf<Int?>(null)
     private val recordingRuntime = mutableStateOf(RecordingRuntimeSnapshot())
     private var serviceBinder: ScreenRecordingService.LocalBinder? = null
@@ -67,6 +78,11 @@ class MainActivity : ComponentActivity() {
         if (granted) launchProjectionConsent() else showNotificationPermissionExplanation.value = true
     }
 
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        microphonePermissionPending = false
+        if (granted) continueNotificationPermission() else showMicrophonePermissionExplanation.value = true
+    }
+
     private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         projectionConsentPending = false
         val data = result.data
@@ -79,7 +95,15 @@ class MainActivity : ComponentActivity() {
         val density = resources.displayMetrics.density
         val width = (configuration.screenWidthDp * density).toInt()
         val height = (configuration.screenHeightDp * density).toInt()
-        val serviceIntent = ScreenRecordingService.startIntent(this, result.resultCode, data, width, height, configuration.densityDpi)
+        val serviceIntent = ScreenRecordingService.startIntent(
+            this,
+            result.resultCode,
+            data,
+            width,
+            height,
+            configuration.densityDpi,
+            requestedSessionAudioMode,
+        )
         try {
             backgroundWhenRecordingStarts = true
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent) else startService(serviceIntent)
@@ -94,11 +118,17 @@ class MainActivity : ComponentActivity() {
         projectionConsentPending = savedInstanceState?.getBoolean(STATE_PROJECTION_CONSENT_PENDING) == true
         notificationPermissionPending = savedInstanceState?.getBoolean(STATE_NOTIFICATION_PERMISSION_PENDING) == true
         notificationPermissionRequested = savedInstanceState?.getBoolean(STATE_NOTIFICATION_PERMISSION_REQUESTED) == true
+        microphonePermissionPending = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_PENDING) == true
+        microphonePermissionRequested = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_REQUESTED) == true
         backgroundWhenRecordingStarts = savedInstanceState?.getBoolean(STATE_BACKGROUND_WHEN_RECORDING) == true
         showNotificationPermissionExplanation.value = savedInstanceState?.getBoolean(STATE_SHOW_NOTIFICATION_EXPLANATION) == true
+        showMicrophonePermissionExplanation.value = savedInstanceState?.getBoolean(STATE_SHOW_MICROPHONE_EXPLANATION) == true
+        _selectedAudioMode.value = savedInstanceState?.getString(STATE_SELECTED_AUDIO_MODE)?.toAudioMode() ?: AudioMode.None
+        requestedSessionAudioMode = savedInstanceState?.getString(STATE_REQUESTED_AUDIO_MODE)?.toAudioMode() ?: selectedAudioMode.value
         enableEdgeToEdge()
         setContent {
             val runtime = recordingRuntime.value
+            val audioMode by selectedAudioMode.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
                 elapsedSeconds = runtime.elapsedSeconds,
@@ -113,6 +143,8 @@ class MainActivity : ComponentActivity() {
                     }
                     serviceBinder?.acknowledgeTerminal()
                 },
+                audioMode = audioMode,
+                onAudioModeSelected = { _selectedAudioMode.value = it },
             )
             if (showNotificationPermissionExplanation.value) {
                 AlertDialog(
@@ -135,6 +167,28 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
+            if (showMicrophonePermissionExplanation.value) {
+                AlertDialog(
+                    onDismissRequest = { showMicrophonePermissionExplanation.value = false },
+                    title = { Text(stringResource(R.string.microphone_permission_title)) },
+                    text = { Text(stringResource(R.string.microphone_permission_explanation)) },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            showMicrophonePermissionExplanation.value = false
+                            requestedSessionAudioMode = AudioMode.None
+                            continueNotificationPermission()
+                        }) { Text(stringResource(R.string.record_without_audio)) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = ::openApplicationSettings) {
+                            Text(stringResource(R.string.app_settings))
+                        }
+                        TextButton(onClick = { showMicrophonePermissionExplanation.value = false }) {
+                            Text(stringResource(R.string.cancel))
+                        }
+                    },
+                )
+            }
         }
     }
 
@@ -142,8 +196,13 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean(STATE_PROJECTION_CONSENT_PENDING, projectionConsentPending)
         outState.putBoolean(STATE_NOTIFICATION_PERMISSION_PENDING, notificationPermissionPending)
         outState.putBoolean(STATE_NOTIFICATION_PERMISSION_REQUESTED, notificationPermissionRequested)
+        outState.putBoolean(STATE_MICROPHONE_PERMISSION_PENDING, microphonePermissionPending)
+        outState.putBoolean(STATE_MICROPHONE_PERMISSION_REQUESTED, microphonePermissionRequested)
         outState.putBoolean(STATE_BACKGROUND_WHEN_RECORDING, backgroundWhenRecordingStarts)
         outState.putBoolean(STATE_SHOW_NOTIFICATION_EXPLANATION, showNotificationPermissionExplanation.value)
+        outState.putBoolean(STATE_SHOW_MICROPHONE_EXPLANATION, showMicrophonePermissionExplanation.value)
+        outState.putString(STATE_SELECTED_AUDIO_MODE, selectedAudioMode.value.name)
+        outState.putString(STATE_REQUESTED_AUDIO_MODE, requestedSessionAudioMode.name)
         super.onSaveInstanceState(outState)
     }
 
@@ -164,6 +223,24 @@ class MainActivity : ComponentActivity() {
     private fun requestRecordingPermissions() {
         if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
         statusMessage.value = null
+        requestedSessionAudioMode = selectedAudioMode.value
+        if (requestedSessionAudioMode == AudioMode.Microphone &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            if (microphonePermissionRequested) {
+                showMicrophonePermissionExplanation.value = true
+            } else {
+                microphonePermissionRequested = true
+                microphonePermissionPending = true
+                microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            return
+        }
+        continueNotificationPermission()
+    }
+
+    private fun continueNotificationPermission() {
+        if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -188,7 +265,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestInProgress(): Boolean =
-        notificationPermissionPending || projectionConsentPending || showNotificationPermissionExplanation.value
+        microphonePermissionPending || notificationPermissionPending || projectionConsentPending ||
+            showMicrophonePermissionExplanation.value || showNotificationPermissionExplanation.value
 
     private fun applyRuntimeSnapshot(snapshot: RecordingRuntimeSnapshot) {
         recordingRuntime.value = snapshot
@@ -212,11 +290,24 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun openApplicationSettings() {
+        showMicrophonePermissionExplanation.value = false
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+    }
+
+    private fun String.toAudioMode(): AudioMode? =
+        AudioMode.entries.firstOrNull { it.name == this && it != AudioMode.DeviceAudio }
+
     private companion object {
         const val STATE_PROJECTION_CONSENT_PENDING = "projection_consent_pending"
         const val STATE_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         const val STATE_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested"
+        const val STATE_MICROPHONE_PERMISSION_PENDING = "microphone_permission_pending"
+        const val STATE_MICROPHONE_PERMISSION_REQUESTED = "microphone_permission_requested"
         const val STATE_BACKGROUND_WHEN_RECORDING = "background_when_recording"
         const val STATE_SHOW_NOTIFICATION_EXPLANATION = "show_notification_explanation"
+        const val STATE_SHOW_MICROPHONE_EXPLANATION = "show_microphone_explanation"
+        const val STATE_SELECTED_AUDIO_MODE = "selected_audio_mode"
+        const val STATE_REQUESTED_AUDIO_MODE = "requested_audio_mode"
     }
 }

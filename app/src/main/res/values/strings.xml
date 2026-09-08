@@ -35,10 +35,17 @@
     <string name="no_recordings_supporting">Completed screen recordings will appear here.</string>
     <string name="recordings_icon_description">Recording library</string>
     <string name="settings_read_only">Foundation information · settings are read-only for now</string>
+    <string name="settings_supporting">Choose how new recordings capture sound.</string>
     <string name="capture">Capture</string>
     <string name="capture_preset">Capture preset</string>
     <string name="audio">Audio</string>
     <string name="not_configured">Not configured</string>
+    <string name="audio_none">No audio</string>
+    <string name="audio_microphone">Microphone</string>
+    <string name="microphone_permission_title">Microphone unavailable</string>
+    <string name="microphone_permission_explanation">Microphone permission was not granted. You can record this session without audio or cancel.</string>
+    <string name="record_without_audio">Record without audio</string>
+    <string name="app_settings">App settings</string>
     <string name="appearance">Appearance</string>
     <string name="app_theme">App theme</string>
     <string name="system_default">System default</string>
