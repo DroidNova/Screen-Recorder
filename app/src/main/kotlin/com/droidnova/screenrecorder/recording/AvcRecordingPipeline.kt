@@ -492,6 +492,7 @@ internal class AvcRecordingPipeline(
     private class PauseTimeline(private val sessionStartNanos: Long) {
         private var pauseStartedNanos: Long? = null
         private val completedPauses = mutableListOf<PauseInterval>()
+        private var retiredPausedNanos = 0L
 
         @Synchronized
         fun pause(atNanos: Long) {
@@ -513,11 +514,16 @@ internal class AvcRecordingPipeline(
             val currentPause = pauseStartedNanos
             if (currentPause != null && presentationNanos >= currentPause) return null
 
-            var pausedBeforePresentationNanos = 0L
-            completedPauses.forEach { interval ->
+            var pausedBeforePresentationNanos = retiredPausedNanos
+            val iterator = completedPauses.iterator()
+            while (iterator.hasNext()) {
+                val interval = iterator.next()
                 if (presentationNanos in interval.startNanos until interval.endNanos) return null
                 if (presentationNanos >= interval.endNanos) {
-                    pausedBeforePresentationNanos += interval.endNanos - interval.startNanos
+                    val duration = interval.endNanos - interval.startNanos
+                    pausedBeforePresentationNanos += duration
+                    retiredPausedNanos += duration
+                    iterator.remove()
                 }
             }
             return (normalizedPresentationTimeUs -
@@ -534,11 +540,11 @@ internal class AvcRecordingPipeline(
         private var started = false
         private var videoTrack = -1
         private var audioTrack = -1
-        private var pendingBytes = 0
+        private var pendingBytes = 0L
         private val pending = ArrayDeque<PendingSample>()
-        var videoSamples = 0
+        var videoSamples = 0L
             private set
-        var audioSamples = 0
+        var audioSamples = 0L
             private set
         val hasVideoTrack: Boolean get() = videoTrack >= 0
         val hasAudioTrack: Boolean get() = audioTrack >= 0
@@ -563,13 +569,13 @@ internal class AvcRecordingPipeline(
                 writeStarted(track, buffer, info)
                 return
             }
-            check(pendingBytes + info.size <= MAX_PENDING_MUXER_BYTES)
+            check(pendingBytes + info.size.toLong() <= MAX_PENDING_MUXER_BYTES)
             val bytes = ByteArray(info.size)
             buffer.position(info.offset)
             buffer.limit(info.offset + info.size)
             buffer.get(bytes)
             pending.addLast(PendingSample(track, bytes, info.presentationTimeUs, info.flags))
-            pendingBytes += bytes.size
+            pendingBytes += bytes.size.toLong()
         }
 
         private fun startIfReady() {
@@ -620,7 +626,7 @@ internal class AvcRecordingPipeline(
         const val PCM_BYTES_PER_SAMPLE = 2
         const val MIN_AUDIO_BUFFER_BYTES = 8_192
         const val MAX_AUDIO_BUFFER_BYTES = 262_144
-        const val MAX_PENDING_MUXER_BYTES = 2 * 1024 * 1024
+        const val MAX_PENDING_MUXER_BYTES = 2L * 1024L * 1024L
         const val MAX_ZERO_READS = 20
         const val DEQUEUE_TIMEOUT_US = 10_000L
         const val FINALIZATION_TIMEOUT_NANOS = 5_000_000_000L

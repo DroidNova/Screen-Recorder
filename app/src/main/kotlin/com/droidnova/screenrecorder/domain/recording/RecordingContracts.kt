@@ -41,7 +41,8 @@ sealed interface RecordingFailure {
     data class VideoEncoderFailure(val stage: FailureStage) : RecordingFailure
     data class AudioFailure(val stage: FailureStage) : RecordingFailure
     data object OutputInitializationFailure : RecordingFailure
-    data object StorageFailure : RecordingFailure
+    data object StorageUnavailable : RecordingFailure
+    data object StorageWriteFailed : RecordingFailure
     data object FinalizationFailure : RecordingFailure
     data object UnexpectedInternalFailure : RecordingFailure
 }

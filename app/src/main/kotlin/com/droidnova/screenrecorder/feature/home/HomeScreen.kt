@@ -27,9 +27,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.platform.LocalContext
-import android.os.Environment
-import android.os.StatFs
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.ui.theme.Spacing
@@ -43,6 +40,7 @@ fun HomeScreen(
     recordingState: RecordingState = RecordingState.Idle,
     elapsedSeconds: Long = 0,
     countdownRemainingSeconds: Int? = null,
+    availableStorageBytes: Long? = null,
     statusMessage: String? = null,
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
@@ -55,12 +53,6 @@ fun HomeScreen(
     audioMode: AudioMode = AudioMode.None,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
-    val availableGigabytes = remember {
-        context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)?.let { directory ->
-            StatFs(directory.path).availableBytes / (1024L * 1024L * 1024L)
-        }
-    }
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page),
         verticalArrangement = Arrangement.spacedBy(Spacing.Section),
@@ -136,7 +128,7 @@ fun HomeScreen(
                 }
                 SummaryRow(
                     R.string.storage,
-                    availableGigabytes?.let { stringResource(R.string.available_storage, it) }
+                    availableStorageBytes?.let { stringResource(R.string.available_storage, it.toDouble() / (1024.0 * 1024.0 * 1024.0)) }
                         ?: stringResource(R.string.app_storage),
                 )
                 selectedVideo?.let {
@@ -153,7 +145,8 @@ fun HomeScreen(
         }
         if (recordingState is RecordingState.Recording || recordingState is RecordingState.Paused) {
             Text(
-                stringResource(R.string.elapsed_time_format, elapsedSeconds / 60, elapsedSeconds % 60),
+                if (elapsedSeconds >= 3600L) stringResource(R.string.elapsed_time_long_format, elapsedSeconds / 3600L, elapsedSeconds / 60L % 60L, elapsedSeconds % 60L)
+                else stringResource(R.string.elapsed_time_format, elapsedSeconds / 60L, elapsedSeconds % 60L),
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )

@@ -31,9 +31,12 @@ import com.droidnova.screenrecorder.domain.recording.CountdownConfiguration
 import com.droidnova.screenrecorder.domain.recording.MaximumDurationPolicy
 import com.droidnova.screenrecorder.domain.recording.RecordingSettings
 import com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot
+import com.droidnova.screenrecorder.recording.RecordingOutcome
 import com.droidnova.screenrecorder.recording.ScreenRecordingService
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.recording.AvcCapabilityProvider
+import com.droidnova.screenrecorder.recording.RecordingStorage
+import com.droidnova.screenrecorder.recording.StorageCheck
 import com.droidnova.screenrecorder.ui.ScreenRecorderApp
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
@@ -53,6 +56,9 @@ class MainActivity : ComponentActivity() {
     private var backgroundWhenRecordingStarts = false
     private val showNotificationPermissionExplanation = mutableStateOf(false)
     private val showMicrophonePermissionExplanation = mutableStateOf(false)
+    private val storageDialog = mutableStateOf<StorageCheck?>(null)
+    private val availableStorageBytes = mutableStateOf<Long?>(null)
+    private var storagePreflightPending = false
     private val _selectedAudioMode = MutableStateFlow(AudioMode.None)
     private val selectedAudioMode = _selectedAudioMode.asStateFlow()
     private var requestedSessionAudioMode = AudioMode.None
@@ -162,6 +168,7 @@ class MainActivity : ComponentActivity() {
                     it.bitrate.bitsPerSecond == savedBitrate
             } ?: options.firstOrNull { it.preset == com.droidnova.screenrecorder.domain.recording.RecordingPreset.Balanced }
                 ?: options.firstOrNull()
+            availableStorageBytes.value = withContext(Dispatchers.IO) { RecordingStorage(this@MainActivity).availableBytes() }
         }
         enableEdgeToEdge()
         setContent {
@@ -177,16 +184,17 @@ class MainActivity : ComponentActivity() {
                 recordingState = runtime.state,
                 elapsedSeconds = runtime.elapsedSeconds,
                 countdownRemainingSeconds = runtime.countdownRemainingSeconds,
+                availableStorageBytes = availableStorageBytes.value,
                 statusMessage = statusMessage.value,
                 onStartRecording = ::requestRecordingPermissions,
                 onStopRecording = { serviceBinder?.requestStop() ?: startService(ScreenRecordingService.stopIntent(this)) },
                 onPauseRecording = { serviceBinder?.requestPause() ?: startService(ScreenRecordingService.pauseIntent(this)) },
                 onResumeRecording = { serviceBinder?.requestResume() ?: startService(ScreenRecordingService.resumeIntent(this)) },
                 onTerminalStateShown = {
-                    statusMessage.value = if (recordingRuntime.value.state is RecordingState.Completed) {
-                        R.string.recording_completed
-                    } else {
-                        R.string.recording_failed
+                    statusMessage.value = when (recordingRuntime.value.outcome) {
+                        RecordingOutcome.StorageLow -> R.string.recording_storage_low_stopped
+                        RecordingOutcome.FinalizationFailed -> R.string.recording_failed
+                        else -> if (recordingRuntime.value.state is RecordingState.Completed) R.string.recording_completed else R.string.recording_failed
                     }
                     serviceBinder?.acknowledgeTerminal()
                 },
@@ -242,6 +250,16 @@ class MainActivity : ComponentActivity() {
                     },
                 )
             }
+            storageDialog.value?.let { failure ->
+                val minimum = (failure as? StorageCheck.Insufficient)?.policy?.minimumStartBytes
+                AlertDialog(
+                    onDismissRequest = { storageDialog.value = null },
+                    title = { Text(stringResource(if (failure is StorageCheck.Insufficient) R.string.storage_low_title else R.string.storage_unavailable_title)) },
+                    text = { Text(if (minimum == null) stringResource(R.string.storage_unavailable_explanation) else getString(R.string.storage_low_explanation, (minimum + 1024L * 1024L - 1L) / (1024L * 1024L))) },
+                    confirmButton = { TextButton(onClick = ::openStorageSettings) { Text(stringResource(R.string.manage_storage)) } },
+                    dismissButton = { TextButton(onClick = { storageDialog.value = null }) { Text(stringResource(R.string.cancel)) } },
+                )
+            }
         }
     }
 
@@ -286,12 +304,33 @@ class MainActivity : ComponentActivity() {
             statusMessage.value = R.string.recording_settings_unavailable
             return
         }
-        statusMessage.value = null
         requestedSessionAudioMode = selectedAudioMode.value
         if (requestedSessionAudioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             statusMessage.value = R.string.device_audio_unavailable
             return
         }
+        storagePreflightPending = true
+        lifecycleScope.launch {
+            val check = withContext(Dispatchers.IO) {
+                RecordingStorage(this@MainActivity).check(selectedVideo.bitrate.bitsPerSecond, requestedSessionAudioMode)
+            }
+            storagePreflightPending = false
+            availableStorageBytes.value = when (check) {
+                is StorageCheck.Available -> check.bytes
+                is StorageCheck.Insufficient -> check.bytes
+                StorageCheck.Unavailable -> null
+            }
+            if (check !is StorageCheck.Available) {
+                statusMessage.value = R.string.storage_preflight_failed
+                storageDialog.value = check
+                return@launch
+            }
+            continueAudioPermission()
+        }
+    }
+
+    private fun continueAudioPermission() {
+        if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
         if (requestedSessionAudioMode != AudioMode.None &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -333,11 +372,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestInProgress(): Boolean =
-        microphonePermissionPending || notificationPermissionPending || projectionConsentPending ||
+        storagePreflightPending || microphonePermissionPending || notificationPermissionPending || projectionConsentPending ||
             showMicrophonePermissionExplanation.value || showNotificationPermissionExplanation.value
 
     private fun applyRuntimeSnapshot(snapshot: RecordingRuntimeSnapshot) {
         recordingRuntime.value = snapshot
+        when (snapshot.outcome) {
+            RecordingOutcome.RecoveredSaved -> statusMessage.value = R.string.recording_recovered_saved
+            RecordingOutcome.RecoveredRemoved -> statusMessage.value = R.string.recording_recovered_removed
+            else -> Unit
+        }
+        if (snapshot.outcome == RecordingOutcome.RecoveredSaved || snapshot.outcome == RecordingOutcome.RecoveredRemoved) {
+            serviceBinder?.acknowledgeOutcome()
+        }
         if (snapshot.state is RecordingState.Countdown && backgroundWhenRecordingStarts) {
             backgroundWhenRecordingStarts = false
             moveTaskToBack(true)
@@ -362,6 +409,13 @@ class MainActivity : ComponentActivity() {
     private fun openApplicationSettings() {
         showMicrophonePermissionExplanation.value = false
         startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+    }
+
+    private fun openStorageSettings() {
+        storageDialog.value = null
+        val intent = Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS)
+        if (intent.resolveActivity(packageManager) != null) startActivity(intent)
+        else statusMessage.value = R.string.storage_settings_unavailable
     }
 
     private fun String.toAudioMode(): AudioMode? =
