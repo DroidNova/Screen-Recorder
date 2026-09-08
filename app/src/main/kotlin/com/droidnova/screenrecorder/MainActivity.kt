@@ -169,7 +169,9 @@ class MainActivity : ComponentActivity() {
             val audioMode by selectedAudioMode.collectAsState()
             val videoOptions by availableVideoConfigurations.collectAsState()
             val selectedVideo by selectedVideoConfiguration.collectAsState()
-            val videoSettingsValid = selectedVideo != null && videoOptions.any { it.sameEncodingAs(selectedVideo) }
+            val videoSettingsValid = selectedVideo?.let { selected ->
+                videoOptions.any { it.sameEncodingAs(selected) }
+            } == true
             val countdown by countdownSeconds.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
