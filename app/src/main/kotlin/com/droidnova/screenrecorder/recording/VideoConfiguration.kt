@@ -73,9 +73,19 @@ object RecordingFilename {
         "$PREFIX${epochMillis.coerceAtLeast(0)}_${collisionSequence.coerceAtLeast(0)}.mp4"
 }
 
-data class OutputCompletion(val hasVideoTrack: Boolean, val writtenVideoSamples: Int, val reachedEndOfStream: Boolean)
+data class OutputCompletion(
+    val hasVideoTrack: Boolean,
+    val writtenVideoSamples: Int,
+    val videoReachedEndOfStream: Boolean,
+    val hasAudioTrack: Boolean = false,
+    val writtenAudioSamples: Int = 0,
+    val audioReachedEndOfStream: Boolean = true,
+    val audioRequired: Boolean = false,
+)
 
-fun OutputCompletion.canPublish(): Boolean = hasVideoTrack && writtenVideoSamples > 0 && reachedEndOfStream
+fun OutputCompletion.canPublish(): Boolean =
+    hasVideoTrack && writtenVideoSamples > 0 && videoReachedEndOfStream &&
+        (!audioRequired || hasAudioTrack && writtenAudioSamples > 0 && audioReachedEndOfStream)
 
 object Milestone5Settings {
     val default = RecordingSettings(

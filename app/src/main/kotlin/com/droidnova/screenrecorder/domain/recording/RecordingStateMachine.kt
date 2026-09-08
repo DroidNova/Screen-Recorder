@@ -32,6 +32,7 @@ object RecordingStateMachine {
             is RecordingState.Preparing -> when (input) {
                 RecordingEvent.PreparationReady -> RecordingState.Countdown(state.settings)
                 RecordingCommand.Cancel -> RecordingState.Idle
+                is RecordingCommand.Stop -> RecordingState.Stopping(state.settings, input.reason)
                 is RecordingEvent.FatalFailure -> RecordingState.Failed(state.settings, input.failure)
                 else -> null
             }
