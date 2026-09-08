@@ -91,7 +91,7 @@ class ScreenRecordingService : Service() {
             AudioMode.entries.firstOrNull { it.name == value }
         }
         if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0 ||
-            audioMode != AudioMode.None && audioMode != AudioMode.Microphone
+            audioMode == null || audioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
         ) {
             stopIfIdle()
             return
@@ -101,7 +101,7 @@ class ScreenRecordingService : Service() {
             cleanupStarted.set(false)
             applyTransitionLocked(RecordingCommand.Start(Milestone5Settings.default.copy(audioMode = requireNotNull(audioMode))))
         }
-        if (audioMode == AudioMode.Microphone && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        if (audioMode != AudioMode.None && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             terminalFailure(RecordingFailure.RequiredPermissionDenied(RequiredPermission.Microphone))
             return
         }

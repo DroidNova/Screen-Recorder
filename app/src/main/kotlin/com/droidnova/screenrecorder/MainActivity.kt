@@ -224,7 +224,11 @@ class MainActivity : ComponentActivity() {
         if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
         statusMessage.value = null
         requestedSessionAudioMode = selectedAudioMode.value
-        if (requestedSessionAudioMode == AudioMode.Microphone &&
+        if (requestedSessionAudioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            statusMessage.value = R.string.device_audio_unavailable
+            return
+        }
+        if (requestedSessionAudioMode != AudioMode.None &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
             if (microphonePermissionRequested) {
@@ -296,7 +300,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun String.toAudioMode(): AudioMode? =
-        AudioMode.entries.firstOrNull { it.name == this && it != AudioMode.DeviceAudio }
+        AudioMode.entries.firstOrNull {
+            it.name == this && (it != AudioMode.DeviceAudio || Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+        }
 
     private companion object {
         const val STATE_PROJECTION_CONSENT_PENDING = "projection_consent_pending"

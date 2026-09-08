@@ -42,8 +42,11 @@
     <string name="not_configured">Not configured</string>
     <string name="audio_none">No audio</string>
     <string name="audio_microphone">Microphone</string>
-    <string name="microphone_permission_title">Microphone unavailable</string>
-    <string name="microphone_permission_explanation">Microphone permission was not granted. You can record this session without audio or cancel.</string>
+    <string name="audio_device">Device audio</string>
+    <string name="device_audio_supporting">Available on Android 10+. Some apps may block audio capture.</string>
+    <string name="device_audio_unavailable">Device audio is available on Android 10 and later.</string>
+    <string name="microphone_permission_title">Audio recording unavailable</string>
+    <string name="microphone_permission_explanation">Audio recording permission was not granted. You can record this session without audio or cancel.</string>
     <string name="record_without_audio">Record without audio</string>
     <string name="app_settings">App settings</string>
     <string name="appearance">Appearance</string>

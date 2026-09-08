@@ -27,19 +27,25 @@ import com.droidnova.screenrecorder.domain.recording.AudioMode
 @Composable fun SettingsScreen(
     audioMode: AudioMode = AudioMode.None,
     audioModeEnabled: Boolean = true,
+    deviceAudioAvailable: Boolean = true,
     onAudioModeSelected: (AudioMode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
         Text(stringResource(R.string.settings_supporting), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        CaptureSection(audioMode, audioModeEnabled, onAudioModeSelected)
+        CaptureSection(audioMode, audioModeEnabled, deviceAudioAvailable, onAudioModeSelected)
         Section(R.string.appearance, listOf(R.string.app_theme to R.string.system_default))
         Section(R.string.about, listOf(R.string.version to R.string.version_value))
     }
 }
 
 @Composable
-private fun CaptureSection(audioMode: AudioMode, enabled: Boolean, onSelected: (AudioMode) -> Unit) {
+private fun CaptureSection(
+    audioMode: AudioMode,
+    enabled: Boolean,
+    deviceAudioAvailable: Boolean,
+    onSelected: (AudioMode) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.Small)) {
         Text(stringResource(R.string.capture), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
         Card(Modifier.fillMaxWidth()) {
@@ -49,25 +55,38 @@ private fun CaptureSection(audioMode: AudioMode, enabled: Boolean, onSelected: (
                     Text(stringResource(R.string.balanced), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Text(stringResource(R.string.audio), style = MaterialTheme.typography.titleMedium)
-                AudioMode.entries.filter { it != AudioMode.DeviceAudio }.forEach { mode ->
+                AudioMode.entries.forEach { mode ->
+                    val modeEnabled = enabled && (mode != AudioMode.DeviceAudio || deviceAudioAvailable)
                     Row(
                         Modifier.fillMaxWidth().selectable(
                             selected = audioMode == mode,
-                            enabled = enabled,
+                            enabled = modeEnabled,
                             role = Role.RadioButton,
                             onClick = { onSelected(mode) },
                         ).padding(vertical = Spacing.Small),
                     ) {
-                        RadioButton(selected = audioMode == mode, onClick = null, enabled = enabled)
-                        Text(
-                            stringResource(if (mode == AudioMode.None) R.string.audio_none else R.string.audio_microphone),
-                            modifier = Modifier.padding(start = Spacing.Small),
-                        )
+                        RadioButton(selected = audioMode == mode, onClick = null, enabled = modeEnabled)
+                        Column(Modifier.padding(start = Spacing.Small)) {
+                            Text(stringResource(mode.labelResource()))
+                            if (mode == AudioMode.DeviceAudio) {
+                                Text(
+                                    stringResource(R.string.device_audio_supporting),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+private fun AudioMode.labelResource(): Int = when (this) {
+    AudioMode.None -> R.string.audio_none
+    AudioMode.Microphone -> R.string.audio_microphone
+    AudioMode.DeviceAudio -> R.string.audio_device
 }
 
 @Composable private fun Section(title: Int, rows: List<Pair<Int, Int>>) {

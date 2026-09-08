@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.AudioFormat
+import android.media.AudioAttributes
+import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
@@ -74,11 +76,11 @@ internal class AvcRecordingPipeline(
             throw RecordingPipelineException(RecordingFailure.VideoEncoderFailure(FailureStage.Initialization))
         }
         muxerCoordinator = try {
-            MuxerCoordinator(requireNotNull(output).createMuxer(), audioMode == AudioMode.Microphone)
+            MuxerCoordinator(requireNotNull(output).createMuxer(), audioMode != AudioMode.None)
         } catch (_: RuntimeException) {
             throw RecordingPipelineException(RecordingFailure.OutputInitializationFailure)
         }
-        if (audioMode == AudioMode.Microphone) startMicrophone()
+        if (audioMode != AudioMode.None) startAudio()
         try {
             projection.registerCallback(projectionCallback, callbackHandler)
             projectionCallbackRegistered = true
@@ -161,26 +163,30 @@ internal class AvcRecordingPipeline(
             hasAudioTrack = coordinator.hasAudioTrack,
             writtenAudioSamples = coordinator.audioSamples,
             audioReachedEndOfStream = audioReachedEos.get(),
-            audioRequired = audioMode == AudioMode.Microphone,
+            audioRequired = audioMode != AudioMode.None,
         )
     }
 
     @SuppressLint("MissingPermission")
-    private fun startMicrophone() {
-        val configured = AUDIO_SAMPLE_RATES.firstNotNullOfOrNull(::createAudioResources)
+    private fun startAudio() {
+        val channelCounts = if (audioMode == AudioMode.DeviceAudio) listOf(2, 1) else listOf(1)
+        val configured = AUDIO_SAMPLE_RATES.firstNotNullOfOrNull { sampleRate ->
+            channelCounts.firstNotNullOfOrNull { channelCount -> createAudioResources(sampleRate, channelCount) }
+        }
             ?: throw RecordingPipelineException(RecordingFailure.AudioFailure(FailureStage.Initialization))
         audioRecord = configured.record
         audioEncoder = configured.encoder
         audioEncoderStarted = true
-        audioThread = Thread({ captureMicrophone(configured) }, "ScreenRecorderAudio").also { it.start() }
+        audioThread = Thread({ captureAudio(configured) }, "ScreenRecorderAudio").also { it.start() }
     }
 
     @SuppressLint("MissingPermission")
-    private fun createAudioResources(sampleRate: Int): AudioResources? {
+    private fun createAudioResources(sampleRate: Int, channelCount: Int): AudioResources? {
+        val channelMask = if (channelCount == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
         val minimum = try {
             AudioRecord.getMinBufferSize(
                 sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
+                channelMask,
                 AudioFormat.ENCODING_PCM_16BIT,
             )
         } catch (_: RuntimeException) {
@@ -191,15 +197,9 @@ internal class AvcRecordingPipeline(
         var record: AudioRecord? = null
         var encoder: MediaCodec? = null
         return try {
-            record = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize,
-            )
-            if (record.state != AudioRecord.STATE_INITIALIZED) error("microphone unavailable")
-            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, AUDIO_CHANNEL_COUNT).apply {
+            record = createAudioRecord(sampleRate, channelMask, bufferSize)
+            if (record.state != AudioRecord.STATE_INITIALIZED) error("audio source unavailable")
+            val format = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, channelCount).apply {
                 setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
                 setInteger(MediaFormat.KEY_BIT_RATE, AUDIO_BIT_RATE)
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, bufferSize)
@@ -207,7 +207,7 @@ internal class AvcRecordingPipeline(
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             encoder.start()
-            AudioResources(record, encoder, sampleRate, bufferSize)
+            AudioResources(record, encoder, sampleRate, channelCount, bufferSize)
         } catch (_: RuntimeException) {
             try { encoder?.release() } catch (_: RuntimeException) { }
             try { record?.release() } catch (_: RuntimeException) { }
@@ -215,7 +215,36 @@ internal class AvcRecordingPipeline(
         }
     }
 
-    private fun captureMicrophone(resources: AudioResources) {
+    @SuppressLint("MissingPermission")
+    private fun createAudioRecord(sampleRate: Int, channelMask: Int, bufferSize: Int): AudioRecord {
+        if (audioMode == AudioMode.DeviceAudio) {
+            check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+            val captureConfiguration = AudioPlaybackCaptureConfiguration.Builder(projection)
+                .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                .build()
+            val audioFormat = AudioFormat.Builder()
+                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(sampleRate)
+                .setChannelMask(channelMask)
+                .build()
+            return AudioRecord.Builder()
+                .setAudioFormat(audioFormat)
+                .setBufferSizeInBytes(bufferSize)
+                .setAudioPlaybackCaptureConfig(captureConfiguration)
+                .build()
+        }
+        return AudioRecord(
+            MediaRecorder.AudioSource.MIC,
+            sampleRate,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize,
+        )
+    }
+
+    private fun captureAudio(resources: AudioResources) {
         val pcm = ByteArray(resources.bufferSize)
         var capturedFrames = 0L
         var zeroReads = 0
@@ -238,13 +267,14 @@ internal class AvcRecordingPipeline(
                             if (inputIndex < 0) continue
                             val input = requireNotNull(resources.encoder.getInputBuffer(inputIndex))
                             input.clear()
-                            val size = minOf(input.remaining(), count - offset).let { it - it % PCM_BYTES_PER_FRAME }
+                            val bytesPerFrame = PCM_BYTES_PER_SAMPLE * resources.channelCount
+                            val size = minOf(input.remaining(), count - offset).let { it - it % bytesPerFrame }
                             if (size == 0) throw RecordingPipelineException(RecordingFailure.AudioFailure(FailureStage.Runtime))
                             input.put(pcm, offset, size)
                             val presentationTimeUs = captureStartOffsetUs +
                                 capturedFrames * MICROSECONDS_PER_SECOND / resources.sampleRate
                             resources.encoder.queueInputBuffer(inputIndex, 0, size, presentationTimeUs, 0)
-                            capturedFrames += size / PCM_BYTES_PER_FRAME
+                            capturedFrames += size / bytesPerFrame
                             offset += size
                         }
                     }
@@ -378,6 +408,7 @@ internal class AvcRecordingPipeline(
         val record: AudioRecord,
         val encoder: MediaCodec,
         val sampleRate: Int,
+        val channelCount: Int,
         val bufferSize: Int,
     )
 
@@ -470,9 +501,8 @@ internal class AvcRecordingPipeline(
 
     private companion object {
         val AUDIO_SAMPLE_RATES = listOf(48_000, 44_100)
-        const val AUDIO_CHANNEL_COUNT = 1
         const val AUDIO_BIT_RATE = 128_000
-        const val PCM_BYTES_PER_FRAME = 2
+        const val PCM_BYTES_PER_SAMPLE = 2
         const val MIN_AUDIO_BUFFER_BYTES = 8_192
         const val MAX_AUDIO_BUFFER_BYTES = 262_144
         const val MAX_PENDING_MUXER_BYTES = 2 * 1024 * 1024

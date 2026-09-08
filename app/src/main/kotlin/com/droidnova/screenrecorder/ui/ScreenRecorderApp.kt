@@ -103,6 +103,7 @@ fun ScreenRecorderApp(
                             SettingsScreen(
                                 audioMode = audioMode,
                                 audioModeEnabled = recordingState == RecordingState.Idle,
+                                deviceAudioAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q,
                                 onAudioModeSelected = onAudioModeSelected,
                             )
                         }
