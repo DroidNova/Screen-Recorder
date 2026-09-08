@@ -46,6 +46,8 @@ fun HomeScreen(
     statusMessage: String? = null,
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
+    onPauseRecording: () -> Unit = {},
+    onResumeRecording: () -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
     selectedVideo: AvailableVideoConfiguration? = null,
     settingsValid: Boolean = false,
@@ -149,12 +151,19 @@ fun HomeScreen(
                 }
             }
         }
-        if (recordingState is RecordingState.Recording) {
+        if (recordingState is RecordingState.Recording || recordingState is RecordingState.Paused) {
             Text(
                 stringResource(R.string.elapsed_time_format, elapsedSeconds / 60, elapsedSeconds % 60),
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
+            if (recordingState is RecordingState.Paused) {
+                Text(
+                    stringResource(R.string.recording_paused),
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+            }
         }
         if (recordingState is RecordingState.Countdown) {
             Text(
@@ -166,7 +175,7 @@ fun HomeScreen(
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Small), modifier = Modifier.fillMaxWidth()) {
             val control = recordingState.availableRecordingControl()
             val idle = control == RecordingControl.Start
-            val recording = control == RecordingControl.Stop
+            val recording = control == RecordingControl.Stop || recordingState is RecordingState.Paused
             Button(
                 onClick = if (recording) onStopRecording else onStartRecording,
                 enabled = recording || idle && settingsValid,
@@ -177,6 +186,22 @@ fun HomeScreen(
                     stringResource(if (recording) R.string.stop_recording else if (idle) R.string.start_recording else R.string.recording_preparing),
                     modifier = Modifier.padding(start = Spacing.Small),
                 )
+            }
+            if (recordingState is RecordingState.Recording || recordingState is RecordingState.Paused) {
+                Button(
+                    onClick = if (recordingState is RecordingState.Paused) onResumeRecording else onPauseRecording,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        stringResource(
+                            if (recordingState is RecordingState.Paused) {
+                                R.string.resume_recording
+                            } else {
+                                R.string.pause_recording
+                            },
+                        ),
+                    )
+                }
             }
             statusMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }

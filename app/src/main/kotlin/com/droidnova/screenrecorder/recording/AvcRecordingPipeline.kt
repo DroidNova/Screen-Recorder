@@ -14,6 +14,7 @@ import android.media.MediaMuxer
 import android.media.MediaRecorder
 import android.media.projection.MediaProjection
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Process
 import android.view.Surface
@@ -45,11 +46,17 @@ internal class AvcRecordingPipeline(
     private var audioEncoderStarted = false
     private var projectionCallbackRegistered = false
     private var released = false
+    private val sessionStartNanos = System.nanoTime()
     private val stopRequested = AtomicBoolean(false)
+    private val audioPauseRequested = AtomicBoolean(false)
+    private val audioPauseMonitor = Object()
+    private val pauseTimeline = PauseTimeline(sessionStartNanos)
+    private var videoSurfaceDetached = false
+    private val runtimeFailure = AtomicReference<RecordingFailure?>()
     private val audioFailure = AtomicReference<RecordingFailure.AudioFailure?>()
     private val audioInputEosQueued = AtomicBoolean(audioMode == AudioMode.None)
     private val audioReachedEos = AtomicBoolean(audioMode == AudioMode.None)
-    private val sessionStartNanos = System.nanoTime()
+    private var lastAudioPresentationTimeUs = -1L
 
     fun start(callbackHandler: Handler, projectionCallback: MediaProjection.Callback) {
         val selected = videoConfiguration
@@ -100,6 +107,65 @@ internal class AvcRecordingPipeline(
 
     fun requestStop() {
         stopRequested.set(true)
+        synchronized(audioPauseMonitor) { audioPauseMonitor.notifyAll() }
+    }
+
+    @Synchronized
+    fun pause() {
+        check(!released)
+        val pauseNanos = System.nanoTime()
+        val suspended = try {
+            videoEncoder?.setParameters(Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_SUSPEND, 1)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    putLong(
+                        MediaCodec.PARAMETER_KEY_SUSPEND_TIME,
+                        pauseNanos / NANOS_PER_MICROSECOND,
+                    )
+                }
+            })
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+        if (!suspended) {
+            try {
+                virtualDisplay?.setSurface(null)
+                videoSurfaceDetached = true
+            } catch (_: RuntimeException) {
+                throw fail(RecordingFailure.VideoEncoderFailure(FailureStage.Runtime))
+            }
+        }
+        pauseTimeline.pause(pauseNanos)
+        if (audioMode != AudioMode.None) {
+            audioPauseRequested.set(true)
+            try {
+                audioRecord?.stop()
+            } catch (_: RuntimeException) {
+                audioPauseRequested.set(false)
+                throw fail(RecordingFailure.AudioFailure(FailureStage.Runtime))
+            }
+        }
+    }
+
+    @Synchronized
+    fun resume() {
+        check(!released)
+        val resumeNanos = System.nanoTime()
+        try {
+            if (videoSurfaceDetached) {
+                virtualDisplay?.setSurface(videoInputSurface)
+                videoSurfaceDetached = false
+            } else {
+                videoEncoder?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_SUSPEND, 0) })
+            }
+            videoEncoder?.setParameters(Bundle().apply { putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0) })
+        } catch (_: RuntimeException) {
+            throw fail(RecordingFailure.VideoEncoderFailure(FailureStage.Runtime))
+        }
+        pauseTimeline.resume(resumeNanos)
+        audioPauseRequested.set(false)
+        synchronized(audioPauseMonitor) { audioPauseMonitor.notifyAll() }
     }
 
     @Synchronized
@@ -120,6 +186,10 @@ internal class AvcRecordingPipeline(
         var deadlineNanos = Long.MAX_VALUE
         var lastVideoPresentationTimeUs = -1L
         while (!videoEos) {
+            runtimeFailure.get()?.let {
+                stopRequested.set(true)
+                if (!eosSignalled) deadlineNanos = System.nanoTime() + FINALIZATION_TIMEOUT_NANOS
+            }
             audioFailure.get()?.let { failure ->
                 stopRequested.set(true)
                 if (!eosSignalled) deadlineNanos = System.nanoTime() + FINALIZATION_TIMEOUT_NANOS
@@ -148,9 +218,11 @@ internal class AvcRecordingPipeline(
                         val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
                         if (!isConfig && info.size > 0) {
                             val normalized = (info.presentationTimeUs - sessionStartNanos / NANOS_PER_MICROSECOND).coerceAtLeast(0)
-                            info.presentationTimeUs = maxOf(normalized, lastVideoPresentationTimeUs + 1)
-                            lastVideoPresentationTimeUs = info.presentationTimeUs
-                            requireNotNull(muxerCoordinator).writeVideo(buffer, info)
+                            pauseTimeline.toActivePresentationTimeUs(normalized)?.let { activePresentationTimeUs ->
+                                info.presentationTimeUs = maxOf(activePresentationTimeUs, lastVideoPresentationTimeUs + 1)
+                                lastVideoPresentationTimeUs = info.presentationTimeUs
+                                requireNotNull(muxerCoordinator).writeVideo(buffer, info)
+                            }
                         }
                         videoEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
                     } finally {
@@ -164,6 +236,7 @@ internal class AvcRecordingPipeline(
             throw RecordingPipelineException(RecordingFailure.AudioFailure(FailureStage.Runtime))
         }
         audioFailure.get()?.let { throw RecordingPipelineException(it) }
+        runtimeFailure.get()?.let { throw RecordingPipelineException(it) }
         val coordinator = requireNotNull(muxerCoordinator)
         return OutputCompletion(
             hasVideoTrack = coordinator.hasVideoTrack,
@@ -265,8 +338,20 @@ internal class AvcRecordingPipeline(
                 throw RecordingPipelineException(RecordingFailure.AudioFailure(FailureStage.Initialization))
             }
             while (!stopRequested.get()) {
+                if (audioPauseRequested.get()) {
+                    drainAudioOutput(resources.encoder, false)
+                    synchronized(audioPauseMonitor) {
+                        while (audioPauseRequested.get() && !stopRequested.get()) audioPauseMonitor.wait()
+                    }
+                    if (stopRequested.get()) break
+                    resources.record.startRecording()
+                    if (resources.record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                        throw RecordingPipelineException(RecordingFailure.AudioFailure(FailureStage.Runtime))
+                    }
+                }
                 val count = resources.record.read(pcm, 0, pcm.size, AudioRecord.READ_BLOCKING)
                 when {
+                    audioPauseRequested.get() -> Unit
                     count > 0 -> {
                         zeroReads = 0
                         var offset = 0
@@ -333,7 +418,14 @@ internal class AvcRecordingPipeline(
                     try {
                         val buffer = requireNotNull(codec.getOutputBuffer(index))
                         val isConfig = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                        if (!isConfig && info.size > 0) requireNotNull(muxerCoordinator).writeAudio(buffer, info)
+                        if (!isConfig && info.size > 0) {
+                            info.presentationTimeUs = maxOf(
+                                info.presentationTimeUs.coerceAtLeast(0L),
+                                lastAudioPresentationTimeUs + 1L,
+                            )
+                            lastAudioPresentationTimeUs = info.presentationTimeUs
+                            requireNotNull(muxerCoordinator).writeAudio(buffer, info)
+                        }
                         if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) {
                             audioReachedEos.set(true)
                             return
@@ -382,6 +474,13 @@ internal class AvcRecordingPipeline(
 
     fun takeOutput(): RecordingOutput? = output.also { output = null }
 
+    private fun fail(failure: RecordingFailure): RecordingPipelineException {
+        runtimeFailure.compareAndSet(null, failure)
+        stopRequested.set(true)
+        synchronized(audioPauseMonitor) { audioPauseMonitor.notifyAll() }
+        return RecordingPipelineException(failure)
+    }
+
     private data class AudioResources(
         val record: AudioRecord,
         val encoder: MediaCodec,
@@ -389,6 +488,44 @@ internal class AvcRecordingPipeline(
         val channelCount: Int,
         val bufferSize: Int,
     )
+
+    private class PauseTimeline(private val sessionStartNanos: Long) {
+        private var pauseStartedNanos: Long? = null
+        private val completedPauses = mutableListOf<PauseInterval>()
+
+        @Synchronized
+        fun pause(atNanos: Long) {
+            check(pauseStartedNanos == null)
+            pauseStartedNanos = atNanos.coerceAtLeast(sessionStartNanos)
+        }
+
+        @Synchronized
+        fun resume(atNanos: Long) {
+            val started = requireNotNull(pauseStartedNanos)
+            completedPauses += PauseInterval(started, atNanos.coerceAtLeast(started))
+            pauseStartedNanos = null
+        }
+
+        @Synchronized
+        fun toActivePresentationTimeUs(normalizedPresentationTimeUs: Long): Long? {
+            val presentationNanos = sessionStartNanos +
+                normalizedPresentationTimeUs * NANOS_PER_MICROSECOND
+            val currentPause = pauseStartedNanos
+            if (currentPause != null && presentationNanos >= currentPause) return null
+
+            var pausedBeforePresentationNanos = 0L
+            completedPauses.forEach { interval ->
+                if (presentationNanos in interval.startNanos until interval.endNanos) return null
+                if (presentationNanos >= interval.endNanos) {
+                    pausedBeforePresentationNanos += interval.endNanos - interval.startNanos
+                }
+            }
+            return (normalizedPresentationTimeUs -
+                pausedBeforePresentationNanos / NANOS_PER_MICROSECOND).coerceAtLeast(0)
+        }
+
+        private data class PauseInterval(val startNanos: Long, val endNanos: Long)
+    }
 
     private class MuxerCoordinator(
         private var muxer: MediaMuxer?,

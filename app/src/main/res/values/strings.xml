@@ -17,6 +17,9 @@
     <string name="start_recording">Start recording</string>
     <string name="recording_unavailable">Recording setup is not active in this foundation build.</string>
     <string name="stop_recording">Stop recording</string>
+    <string name="pause_recording">Pause</string>
+    <string name="resume_recording">Resume</string>
+    <string name="recording_paused">Paused</string>
     <string name="recording_preparing">Preparing recording</string>
     <string name="elapsed_time_format">%1$02d:%2$02d</string>
     <string name="recording_consent_denied">Screen recording permission was not granted.</string>
@@ -31,6 +34,8 @@
     <string name="recording_channel_name">Screen recording</string>
     <string name="recording_notification_title">Screen recording</string>
     <string name="recording_notification_body">Recording your screen</string>
+    <string name="recording_notification_paused">Recording paused</string>
+    <string name="recording_notification_elapsed">Recording · %1$02d:%2$02d</string>
     <string name="no_recordings">No recordings yet</string>
     <string name="no_recordings_supporting">Completed screen recordings will appear here.</string>
     <string name="recordings_icon_description">Recording library</string>

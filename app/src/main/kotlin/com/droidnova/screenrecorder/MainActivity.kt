@@ -180,6 +180,8 @@ class MainActivity : ComponentActivity() {
                 statusMessage = statusMessage.value,
                 onStartRecording = ::requestRecordingPermissions,
                 onStopRecording = { serviceBinder?.requestStop() ?: startService(ScreenRecordingService.stopIntent(this)) },
+                onPauseRecording = { serviceBinder?.requestPause() ?: startService(ScreenRecordingService.pauseIntent(this)) },
+                onResumeRecording = { serviceBinder?.requestResume() ?: startService(ScreenRecordingService.resumeIntent(this)) },
                 onTerminalStateShown = {
                     statusMessage.value = if (recordingRuntime.value.state is RecordingState.Completed) {
                         R.string.recording_completed
