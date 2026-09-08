@@ -15,6 +15,10 @@ internal enum class OutputPhase { WRITING, READY_TO_PUBLISH, DISCARD_REQUIRED }
 
 internal data class PendingOutput(val location: String, val displayName: String, val startedAt: Long, val phase: OutputPhase)
 
+enum class RecordingOutcomeType { IncompleteRecordingRemoved, RecoveredRecordingSaved, StorageLow, FinalizationFailed }
+
+data class PendingRecordingOutcome(val id: Long, val type: RecordingOutcomeType)
+
 internal class PendingOutputJournal(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
@@ -34,7 +38,41 @@ internal class PendingOutputJournal(context: Context) {
         .putString(KEY_NAME, entry.displayName).putLong(KEY_STARTED, entry.startedAt)
         .putString(KEY_PHASE, entry.phase.name).commit()
 
-    fun clear(): Boolean = preferences.edit().clear().commit()
+    fun clear(): Boolean = journalRemoval(preferences.edit()).commit()
+
+    fun readOutcome(): PendingRecordingOutcome? {
+        val id = preferences.getLong(KEY_OUTCOME_ID, 0L).takeIf { it > 0L } ?: return null
+        val type = preferences.getString(KEY_OUTCOME_TYPE, null)?.let {
+            runCatching { RecordingOutcomeType.valueOf(it) }.getOrNull()
+        } ?: return null
+        return PendingRecordingOutcome(id, type)
+    }
+
+    fun storeOutcome(type: RecordingOutcomeType): PendingRecordingOutcome {
+        val outcome = PendingRecordingOutcome(nextOutcomeId(), type)
+        check(preferences.edit().putLong(KEY_OUTCOME_ID, outcome.id).putString(KEY_OUTCOME_TYPE, type.name).commit())
+        return outcome
+    }
+
+    fun resolveWithOutcome(type: RecordingOutcomeType): PendingRecordingOutcome {
+        val outcome = PendingRecordingOutcome(nextOutcomeId(), type)
+        check(journalRemoval(preferences.edit())
+            .putLong(KEY_OUTCOME_ID, outcome.id).putString(KEY_OUTCOME_TYPE, type.name).commit())
+        return outcome
+    }
+
+    fun acknowledgeOutcome(id: Long): Boolean {
+        if (preferences.getLong(KEY_OUTCOME_ID, 0L) != id) return false
+        return preferences.edit().remove(KEY_OUTCOME_ID).remove(KEY_OUTCOME_TYPE).commit()
+    }
+
+    private fun journalRemoval(editor: android.content.SharedPreferences.Editor) = editor
+        .remove(KEY_VERSION).remove(KEY_LOCATION).remove(KEY_NAME).remove(KEY_STARTED).remove(KEY_PHASE)
+
+    private fun nextOutcomeId(): Long = maxOf(
+        System.currentTimeMillis().coerceAtLeast(1L),
+        preferences.getLong(KEY_OUTCOME_ID, 0L).let { if (it == Long.MAX_VALUE) 1L else it + 1L },
+    )
 
     private companion object {
         const val PREFERENCES = "pending_recording_output"
@@ -44,6 +82,8 @@ internal class PendingOutputJournal(context: Context) {
         const val KEY_NAME = "display_name"
         const val KEY_STARTED = "started_at"
         const val KEY_PHASE = "phase"
+        const val KEY_OUTCOME_ID = "outcome_id"
+        const val KEY_OUTCOME_TYPE = "outcome_type"
     }
 }
 
@@ -109,42 +149,46 @@ internal class RecordingOutput private constructor(
             return RecordingOutput(context, entry, journal, null, null, partial, File(directory, displayName))
         }
 
-        fun recover(context: Context): RecoveryOutcome? {
+        fun recover(context: Context): PendingRecordingOutcome? {
             val journal = PendingOutputJournal(context)
-            val entry = journal.read() ?: return null
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) recoverMediaStore(context, journal, entry)
-            else recoverLegacy(context, journal, entry)
+            val entry = journal.read()
+            if (entry != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) recoverMediaStore(context, journal, entry)
+                else recoverLegacy(context, journal, entry)
+            }
+            return journal.readOutcome()
         }
 
-        private fun recoverMediaStore(context: Context, journal: PendingOutputJournal, entry: PendingOutput): RecoveryOutcome? {
+        private fun recoverMediaStore(context: Context, journal: PendingOutputJournal, entry: PendingOutput) {
             val uri = runCatching { Uri.parse(entry.location) }.getOrNull()
             if (uri == null || uri.scheme != "content" || uri.authority != MediaStore.AUTHORITY ||
                 uri.pathSegments.takeLast(2).firstOrNull() != "media" || uri.lastPathSegment?.toLongOrNull() == null
             ) {
-                journal.clear(); return null
+                journal.clear(); return
             }
             val projection = arrayOf(MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.MIME_TYPE, MediaStore.Video.Media.RELATIVE_PATH)
             val valid = context.contentResolver.query(uri, projection, null, null, null)?.use {
                 it.moveToFirst() && it.getString(0) == entry.displayName && it.getString(1) == MIME_TYPE &&
                     it.getString(2)?.trimEnd('/') == RELATIVE_PATH
             } == true
-            if (!valid) { journal.clear(); return null }
-            return if (entry.phase == OutputPhase.READY_TO_PUBLISH) {
+            if (!valid) { journal.clear(); return }
+            if (entry.phase == OutputPhase.READY_TO_PUBLISH) {
                 val values = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-                if (context.contentResolver.update(uri, values, null, null) == 1) { journal.clear(); RecoveryOutcome.Saved } else null
+                if (context.contentResolver.update(uri, values, null, null) == 1) {
+                    journal.resolveWithOutcome(RecordingOutcomeType.RecoveredRecordingSaved)
+                }
             } else {
-                if (context.contentResolver.delete(uri, null, null) >= 0) { journal.clear(); RecoveryOutcome.Removed } else null
+                if (context.contentResolver.delete(uri, null, null) >= 0) {
+                    journal.resolveWithOutcome(RecordingOutcomeType.IncompleteRecordingRemoved)
+                }
             }
         }
 
-        private fun recoverLegacy(context: Context, journal: PendingOutputJournal, entry: PendingOutput): RecoveryOutcome? {
+        private fun recoverLegacy(context: Context, journal: PendingOutputJournal, entry: PendingOutput) {
             val directory = File(requireNotNull(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES)), ".pending").canonicalFile
             val file = runCatching { File(entry.location).canonicalFile }.getOrNull()
-            if (file == null || file.parentFile != directory || !file.name.endsWith(".partial")) { journal.clear(); return null }
-            if (!file.exists() || file.delete()) { journal.clear(); return RecoveryOutcome.Removed }
-            return null
+            if (file == null || file.parentFile != directory || !file.name.endsWith(".partial")) { journal.clear(); return }
+            if (!file.exists() || file.delete()) journal.resolveWithOutcome(RecordingOutcomeType.IncompleteRecordingRemoved)
         }
     }
 }
-
-internal enum class RecoveryOutcome { Saved, Removed }

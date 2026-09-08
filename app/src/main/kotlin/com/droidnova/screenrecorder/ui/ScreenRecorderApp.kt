@@ -9,10 +9,14 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -32,6 +36,8 @@ import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
+import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
+import com.droidnova.screenrecorder.recording.RecordingOutcomeType
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,6 +47,8 @@ fun ScreenRecorderApp(
     countdownRemainingSeconds: Int? = null,
     availableStorageBytes: Long? = null,
     statusMessage: Int? = null,
+    pendingOutcome: PendingRecordingOutcome? = null,
+    onOutcomeShown: (Long) -> Unit = {},
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {},
@@ -60,6 +68,23 @@ fun ScreenRecorderApp(
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
         val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
+        val snackbarHostState = remember { SnackbarHostState() }
+        val outcomeMessage = pendingOutcome?.let {
+            stringResource(
+                when (it.type) {
+                    RecordingOutcomeType.IncompleteRecordingRemoved -> R.string.recording_recovered_removed
+                    RecordingOutcomeType.RecoveredRecordingSaved -> R.string.recording_recovered_saved
+                    RecordingOutcomeType.StorageLow -> R.string.recording_storage_low_stopped
+                    RecordingOutcomeType.FinalizationFailed -> R.string.recording_failed
+                },
+            )
+        }
+        LaunchedEffect(pendingOutcome?.id) {
+            val outcome = pendingOutcome ?: return@LaunchedEffect
+            val message = outcomeMessage ?: return@LaunchedEffect
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Long)
+            onOutcomeShown(outcome.id)
+        }
         LaunchedEffect(recordingState) {
             if (recordingState is RecordingState.Completed || recordingState is RecordingState.Failed) onTerminalStateShown()
         }
@@ -92,6 +117,7 @@ fun ScreenRecorderApp(
             androidx.compose.material3.Scaffold(
                 modifier = Modifier.safeDrawingPadding(),
                 topBar = { TopAppBar(title = { Text(stringResource(current.label)) }) },
+                snackbarHost = { SnackbarHost(snackbarHostState) },
                 containerColor = MaterialTheme.colorScheme.background,
             ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {

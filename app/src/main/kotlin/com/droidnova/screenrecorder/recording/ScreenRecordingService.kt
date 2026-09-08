@@ -62,10 +62,8 @@ data class RecordingRuntimeSnapshot(
     val recordingStartedAtNanos: Long? = null,
     val pauseStartedAtNanos: Long? = null,
     val accumulatedPausedNanos: Long = 0,
-    val outcome: RecordingOutcome? = null,
+    val outcome: PendingRecordingOutcome? = null,
 )
-
-enum class RecordingOutcome { StorageLow, RecoveredSaved, RecoveredRemoved, FinalizationFailed }
 
 class ScreenRecordingService : Service() {
     inner class LocalBinder : Binder() {
@@ -74,7 +72,15 @@ class ScreenRecordingService : Service() {
         fun requestPause() { this@ScreenRecordingService.requestPause() }
         fun requestResume() { this@ScreenRecordingService.requestResume() }
         fun acknowledgeTerminal() = dispatch(RecordingCommand.Acknowledge)
-        fun acknowledgeOutcome() { _runtime.value = _runtime.value.copy(outcome = null) }
+        fun acknowledgeOutcome(id: Long) {
+            encoderExecutor.execute {
+                if (PendingOutputJournal(this@ScreenRecordingService).acknowledgeOutcome(id)) {
+                    synchronized(transitionLock) {
+                        if (_runtime.value.outcome?.id == id) _runtime.value = _runtime.value.copy(outcome = null)
+                    }
+                }
+            }
+        }
         fun acknowledgeBackgrounded() { countdownHandoff.countDown() }
     }
 
@@ -109,10 +115,8 @@ class ScreenRecordingService : Service() {
         super.onCreate()
         getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, mainHandler)
         encoderExecutor.execute {
-            val recovered = runCatching { RecordingOutput.recover(this) }.getOrNull() ?: return@execute
-            _runtime.value = _runtime.value.copy(
-                outcome = if (recovered == RecoveryOutcome.Saved) RecordingOutcome.RecoveredSaved else RecordingOutcome.RecoveredRemoved,
-            )
+            val outcome = runCatching { RecordingOutput.recover(this) }.getOrNull() ?: return@execute
+            _runtime.value = _runtime.value.copy(outcome = outcome)
         }
     }
 
@@ -413,7 +417,11 @@ class ScreenRecordingService : Service() {
         if (publishable) {
             dispatch(RecordingEvent.FinalizationSucceeded)
             val reason = (_runtime.value.state as? RecordingState.Completed)?.reason
-            if (reason == StopReason.LowStorage) _runtime.value = _runtime.value.copy(outcome = RecordingOutcome.StorageLow)
+            if (reason == StopReason.LowStorage) {
+                _runtime.value = _runtime.value.copy(
+                    outcome = PendingOutputJournal(this).storeOutcome(RecordingOutcomeType.StorageLow),
+                )
+            }
         } else {
             val current = _runtime.value.state
             if (current is RecordingState.Stopping) {
@@ -421,7 +429,9 @@ class ScreenRecordingService : Service() {
             } else {
                 dispatch(RecordingEvent.FatalFailure(failure ?: RecordingFailure.FinalizationFailure))
             }
-            _runtime.value = _runtime.value.copy(outcome = RecordingOutcome.FinalizationFailed)
+            _runtime.value = _runtime.value.copy(
+                outcome = PendingOutputJournal(this).storeOutcome(RecordingOutcomeType.FinalizationFailed),
+            )
         }
         finishService()
     }

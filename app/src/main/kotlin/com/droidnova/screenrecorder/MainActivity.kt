@@ -31,7 +31,6 @@ import com.droidnova.screenrecorder.domain.recording.CountdownConfiguration
 import com.droidnova.screenrecorder.domain.recording.MaximumDurationPolicy
 import com.droidnova.screenrecorder.domain.recording.RecordingSettings
 import com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot
-import com.droidnova.screenrecorder.recording.RecordingOutcome
 import com.droidnova.screenrecorder.recording.ScreenRecordingService
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.recording.AvcCapabilityProvider
@@ -186,16 +185,16 @@ class MainActivity : ComponentActivity() {
                 countdownRemainingSeconds = runtime.countdownRemainingSeconds,
                 availableStorageBytes = availableStorageBytes.value,
                 statusMessage = statusMessage.value,
+                pendingOutcome = runtime.outcome,
+                onOutcomeShown = { serviceBinder?.acknowledgeOutcome(it) },
                 onStartRecording = ::requestRecordingPermissions,
                 onStopRecording = { serviceBinder?.requestStop() ?: startService(ScreenRecordingService.stopIntent(this)) },
                 onPauseRecording = { serviceBinder?.requestPause() ?: startService(ScreenRecordingService.pauseIntent(this)) },
                 onResumeRecording = { serviceBinder?.requestResume() ?: startService(ScreenRecordingService.resumeIntent(this)) },
                 onTerminalStateShown = {
-                    statusMessage.value = when (recordingRuntime.value.outcome) {
-                        RecordingOutcome.StorageLow -> R.string.recording_storage_low_stopped
-                        RecordingOutcome.FinalizationFailed -> R.string.recording_failed
-                        else -> if (recordingRuntime.value.state is RecordingState.Completed) R.string.recording_completed else R.string.recording_failed
-                    }
+                    statusMessage.value = if (recordingRuntime.value.state is RecordingState.Completed) {
+                        R.string.recording_completed
+                    } else R.string.recording_failed
                     serviceBinder?.acknowledgeTerminal()
                 },
                 audioMode = audioMode,
@@ -377,14 +376,6 @@ class MainActivity : ComponentActivity() {
 
     private fun applyRuntimeSnapshot(snapshot: RecordingRuntimeSnapshot) {
         recordingRuntime.value = snapshot
-        when (snapshot.outcome) {
-            RecordingOutcome.RecoveredSaved -> statusMessage.value = R.string.recording_recovered_saved
-            RecordingOutcome.RecoveredRemoved -> statusMessage.value = R.string.recording_recovered_removed
-            else -> Unit
-        }
-        if (snapshot.outcome == RecordingOutcome.RecoveredSaved || snapshot.outcome == RecordingOutcome.RecoveredRemoved) {
-            serviceBinder?.acknowledgeOutcome()
-        }
         if (snapshot.state is RecordingState.Countdown && backgroundWhenRecordingStarts) {
             backgroundWhenRecordingStarts = false
             moveTaskToBack(true)
