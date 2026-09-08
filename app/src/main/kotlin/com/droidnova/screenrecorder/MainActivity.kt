@@ -169,6 +169,7 @@ class MainActivity : ComponentActivity() {
             val audioMode by selectedAudioMode.collectAsState()
             val videoOptions by availableVideoConfigurations.collectAsState()
             val selectedVideo by selectedVideoConfiguration.collectAsState()
+            val videoSettingsValid = selectedVideo != null && videoOptions.any { it.sameEncodingAs(selectedVideo) }
             val countdown by countdownSeconds.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
@@ -189,6 +190,7 @@ class MainActivity : ComponentActivity() {
                 onAudioModeSelected = { _selectedAudioMode.value = it },
                 videoOptions = videoOptions,
                 selectedVideo = selectedVideo,
+                settingsValid = videoSettingsValid,
                 onVideoSelected = { selectedVideoConfiguration.value = it },
                 countdownSeconds = countdown,
                 onCountdownSelected = { countdownSeconds.value = it },
@@ -275,7 +277,8 @@ class MainActivity : ComponentActivity() {
 
     private fun requestRecordingPermissions() {
         if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
-        if (selectedVideoConfiguration.value == null) {
+        val selectedVideo = selectedVideoConfiguration.value
+        if (selectedVideo == null || availableVideoConfigurations.value.none { it.sameEncodingAs(selectedVideo) }) {
             statusMessage.value = R.string.recording_settings_unavailable
             return
         }
@@ -361,6 +364,9 @@ class MainActivity : ComponentActivity() {
         AudioMode.entries.firstOrNull {
             it.name == this && (it != AudioMode.DeviceAudio || Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
         }
+
+    private fun AvailableVideoConfiguration.sameEncodingAs(other: AvailableVideoConfiguration): Boolean =
+        encoderName == other.encoderName && resolution == other.resolution && frameRate == other.frameRate && bitrate == other.bitrate
 
     private companion object {
         const val STATE_PROJECTION_CONSENT_PENDING = "projection_consent_pending"

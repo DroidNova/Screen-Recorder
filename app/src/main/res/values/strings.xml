@@ -53,6 +53,7 @@
     <string name="estimated_size">≈ %1$d MB/min</string>
     <string name="fps_value">%1$d fps</string>
     <string name="bitrate_value">%1$d Mbps</string>
+    <string name="video_bitrate">Video bitrate</string>
     <string name="resolution_label">%1$dp</string>
     <string name="preset_data_saver">Data Saver</string>
     <string name="preset_high_quality">High Quality</string>

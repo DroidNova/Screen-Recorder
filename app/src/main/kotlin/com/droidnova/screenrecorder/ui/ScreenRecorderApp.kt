@@ -47,6 +47,7 @@ fun ScreenRecorderApp(
     onAudioModeSelected: (AudioMode) -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
     selectedVideo: AvailableVideoConfiguration? = null,
+    settingsValid: Boolean = false,
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     countdownSeconds: Int = 0,
     onCountdownSelected: (Int) -> Unit = {},
@@ -106,6 +107,7 @@ fun ScreenRecorderApp(
                                 onStopRecording = onStopRecording,
                                 videoOptions = videoOptions,
                                 selectedVideo = selectedVideo,
+                                settingsValid = settingsValid,
                                 onVideoSelected = onVideoSelected,
                                 audioMode = audioMode,
                             )

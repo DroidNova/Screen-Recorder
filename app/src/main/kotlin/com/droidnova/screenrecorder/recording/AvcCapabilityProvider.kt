@@ -101,8 +101,10 @@ object AvcCapabilityProvider {
         heightAlignment: Int,
     ): CaptureResolution? {
         val sourceShortEdge = minOf(sourceWidth, sourceHeight)
-        if (shortEdge > sourceShortEdge) return null
-        val scale = shortEdge.toDouble() / sourceShortEdge
+        val minimumSourceShortEdge = if (shortEdge == 1080) 1_024 else shortEdge
+        if (sourceShortEdge < minimumSourceShortEdge) return null
+        val resolvedShortEdge = minOf(shortEdge, sourceShortEdge)
+        val scale = resolvedShortEdge.toDouble() / sourceShortEdge
         val width = alignDown((sourceWidth * scale).toInt(), widthAlignment)
         val height = alignDown((sourceHeight * scale).toInt(), heightAlignment)
         return if (width > 0 && height > 0) CaptureResolution(width, height) else null
@@ -111,7 +113,7 @@ object AvcCapabilityProvider {
     private fun presetFor(shortEdge: Int, fps: Int, bitrate: Int): RecordingPreset = when {
         shortEdge == 480 && fps <= 30 && bitrate == 2_000_000 -> RecordingPreset.DataSaver
         shortEdge == 720 && fps == 30 && bitrate == 6_000_000 -> RecordingPreset.Balanced
-        shortEdge == 1080 && bitrate == 12_000_000 -> RecordingPreset.HighQuality
+        shortEdge == 1080 && fps in setOf(30, 60) && bitrate == 12_000_000 -> RecordingPreset.HighQuality
         else -> RecordingPreset.Custom
     }
 

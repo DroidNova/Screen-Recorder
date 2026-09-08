@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -47,6 +48,7 @@ fun HomeScreen(
     onStopRecording: () -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
     selectedVideo: AvailableVideoConfiguration? = null,
+    settingsValid: Boolean = false,
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     audioMode: AudioMode = AudioMode.None,
     modifier: Modifier = Modifier,
@@ -69,38 +71,67 @@ fun HomeScreen(
             Column(Modifier.padding(Spacing.Card), verticalArrangement = Arrangement.spacedBy(Spacing.Component)) {
                 Text(stringResource(R.string.capture_summary), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
                 val editable = recordingState == RecordingState.Idle
-                val presetOptions = RecordingPreset.entries.mapNotNull { preset ->
-                    videoOptions.filter { it.preset == preset }.maxByOrNull { it.frameRate.framesPerSecond }
-                } + videoOptions.filter { option ->
-                    selectedVideo?.let { option.shortEdge == it.shortEdge && option.frameRate == it.frameRate } == true
-                }
+                val presetOptions = listOf(
+                    resolveNamedPreset(videoOptions, RecordingPreset.DataSaver),
+                    resolveNamedPreset(videoOptions, RecordingPreset.Balanced),
+                    resolveNamedPreset(videoOptions, RecordingPreset.HighQuality),
+                    selectedVideo?.copy(preset = RecordingPreset.Custom),
+                ).filterNotNull().distinctBy { it.preset }
                 SelectableSummaryRow(
                     R.string.quality,
                     selectedVideo?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—",
                     presetOptions.distinct(),
                     editable,
-                    onVideoSelected,
+                    onSelected = onVideoSelected,
+                    optionKey = { it.preset },
                 ) { option ->
-                    "${stringResource(option.preset.labelResource())} · ${stringResource(R.string.bitrate_value, option.bitrate.bitsPerSecond / 1_000_000)}"
+                    if (option.preset == RecordingPreset.Custom) stringResource(R.string.preset_custom) else {
+                        "${stringResource(option.preset.labelResource())} · ${stringResource(R.string.bitrate_value, option.bitrate.bitsPerSecond / 1_000_000)}"
+                    }
                 }
-                SelectableSummaryRow(
-                    R.string.resolution,
-                    selectedVideo?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—",
-                    videoOptions.filter { option ->
-                        selectedVideo?.let { option.frameRate == it.frameRate && option.bitrate == it.bitrate } == true
-                    }.distinctBy { it.shortEdge },
-                    editable,
-                    onVideoSelected,
-                ) { stringResource(R.string.resolution_label, it.shortEdge) }
-                SelectableSummaryRow(
-                    R.string.frame_rate,
-                    selectedVideo?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—",
-                    videoOptions.filter { option ->
-                        selectedVideo?.let { option.shortEdge == it.shortEdge && option.bitrate == it.bitrate } == true
-                    }.distinctBy { it.frameRate },
-                    editable,
-                    onVideoSelected,
-                ) { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) }
+                val custom = selectedVideo?.preset == RecordingPreset.Custom
+                val resolutionValue = selectedVideo?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—"
+                val fpsValue = selectedVideo?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—"
+                if (custom) {
+                    SelectableSummaryRow(
+                        R.string.resolution,
+                        resolutionValue,
+                        videoOptions.distinctBy { it.shortEdge to it.resolution }.sortedBy { it.shortEdge },
+                        editable,
+                        { option ->
+                            val current = selectedVideo
+                            onVideoSelected(
+                                if (current == null) option.copy(preset = RecordingPreset.Custom) else option.copy(
+                                    preset = RecordingPreset.Custom,
+                                    frameRate = current.frameRate,
+                                    bitrate = current.bitrate,
+                                ),
+                            )
+                        },
+                    ) { stringResource(R.string.resolution_label, it.shortEdge) }
+                    SelectableSummaryRow(
+                        R.string.frame_rate,
+                        fpsValue,
+                        videoOptions.filter { it.shortEdge == selectedVideo.shortEdge }
+                            .distinctBy { it.frameRate.framesPerSecond }.sortedBy { it.frameRate.framesPerSecond },
+                        editable,
+                        { option ->
+                            onVideoSelected(option.copy(preset = RecordingPreset.Custom, bitrate = selectedVideo.bitrate))
+                        },
+                    ) { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) }
+                    SelectableSummaryRow(
+                        R.string.video_bitrate,
+                        stringResource(R.string.bitrate_value, selectedVideo.bitrate.bitsPerSecond / 1_000_000),
+                        videoOptions.filter {
+                            it.shortEdge == selectedVideo.shortEdge && it.frameRate == selectedVideo.frameRate
+                        }.distinctBy { it.bitrate.bitsPerSecond }.sortedBy { it.bitrate.bitsPerSecond },
+                        editable,
+                        { onVideoSelected(it.copy(preset = RecordingPreset.Custom)) },
+                    ) { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) }
+                } else {
+                    SummaryRow(R.string.resolution, resolutionValue)
+                    SummaryRow(R.string.frame_rate, fpsValue)
+                }
                 SummaryRow(
                     R.string.storage,
                     availableGigabytes?.let { stringResource(R.string.available_storage, it) }
@@ -138,7 +169,7 @@ fun HomeScreen(
             val recording = control == RecordingControl.Stop
             Button(
                 onClick = if (recording) onStopRecording else onStartRecording,
-                enabled = idle || recording,
+                enabled = recording || idle && settingsValid,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Icon(painterResource(R.drawable.ic_record), contentDescription = null)
@@ -166,6 +197,9 @@ private fun SelectableSummaryRow(
     options: List<AvailableVideoConfiguration>,
     enabled: Boolean,
     onSelected: (AvailableVideoConfiguration) -> Unit,
+    optionKey: (AvailableVideoConfiguration) -> Any = {
+        "${it.resolution}:${it.frameRate}:${it.bitrate}"
+    },
     optionLabel: @Composable (AvailableVideoConfiguration) -> String,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -182,12 +216,39 @@ private fun SelectableSummaryRow(
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(optionLabel(option)) },
-                    onClick = { expanded = false; onSelected(option) },
-                )
+                key(optionKey(option)) {
+                    DropdownMenuItem(
+                        text = { Text(optionLabel(option)) },
+                        onClick = { expanded = false; onSelected(option) },
+                    )
+                }
             }
         }
+    }
+}
+
+private fun resolveNamedPreset(
+    options: List<AvailableVideoConfiguration>,
+    preset: RecordingPreset,
+): AvailableVideoConfiguration? {
+    val matching = options.filter { it.preset == preset }
+    return when (preset) {
+        RecordingPreset.DataSaver -> matching.minWithOrNull(
+            compareBy<AvailableVideoConfiguration> { kotlin.math.abs(it.shortEdge - 480) }
+                .thenBy { kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
+                .thenBy { kotlin.math.abs(it.bitrate.bitsPerSecond - 2_000_000) },
+        )
+        RecordingPreset.Balanced -> matching.minWithOrNull(
+            compareBy<AvailableVideoConfiguration> { kotlin.math.abs(it.shortEdge - 720) }
+                .thenBy { kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
+                .thenBy { kotlin.math.abs(it.bitrate.bitsPerSecond - 6_000_000) },
+        )
+        RecordingPreset.HighQuality -> (matching.ifEmpty { options.filter { it.shortEdge < 1080 } }).maxWithOrNull(
+            compareBy<AvailableVideoConfiguration> { it.shortEdge }
+                .thenBy { it.frameRate.framesPerSecond }
+                .thenBy { it.bitrate.bitsPerSecond },
+        )?.copy(preset = RecordingPreset.HighQuality)
+        RecordingPreset.Custom -> null
     }
 }
 
