@@ -23,6 +23,11 @@
     <string name="recording_start_failed">Screen recording could not be started.</string>
     <string name="recording_completed">Screen recording saved.</string>
     <string name="recording_failed">Screen recording could not be completed.</string>
+    <string name="notification_permission_title">Recording notification unavailable</string>
+    <string name="notification_permission_explanation">Recording can continue, but its notification and Stop action might not appear. Reopen the app or use Android’s active screen-capture control to stop recording.</string>
+    <string name="continue_without_notification">Continue without notification</string>
+    <string name="notification_settings">Notification settings</string>
+    <string name="cancel">Cancel</string>
     <string name="recording_channel_name">Screen recording</string>
     <string name="recording_notification_title">Screen recording</string>
     <string name="recording_notification_body">Recording your screen</string>
