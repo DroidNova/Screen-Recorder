@@ -9,7 +9,6 @@ import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
-import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.media.MediaRecorder
@@ -32,6 +31,7 @@ internal class AvcRecordingPipeline(
     private val sourceHeight: Int,
     private val densityDpi: Int,
     private val audioMode: AudioMode,
+    private val videoConfiguration: SelectedVideoConfiguration,
     private var output: RecordingOutput?,
 ) {
     private var videoEncoder: MediaCodec? = null
@@ -52,8 +52,7 @@ internal class AvcRecordingPipeline(
     private val sessionStartNanos = System.nanoTime()
 
     fun start(callbackHandler: Handler, projectionCallback: MediaProjection.Callback) {
-        val selected = selectConfiguration()
-            ?: throw RecordingPipelineException(RecordingFailure.VideoEncoderFailure(FailureStage.Initialization))
+        val selected = videoConfiguration
         val videoFormat = MediaFormat.createVideoFormat(
             MediaFormat.MIMETYPE_VIDEO_AVC,
             selected.resolution.width,
@@ -101,6 +100,16 @@ internal class AvcRecordingPipeline(
 
     fun requestStop() {
         stopRequested.set(true)
+    }
+
+    @Synchronized
+    fun resizeCapturedContent(width: Int, height: Int) {
+        if (released || width <= 0 || height <= 0) return
+        val canvas = videoConfiguration.resolution
+        val scale = minOf(canvas.width.toDouble() / width, canvas.height.toDouble() / height)
+        val fittedWidth = (width * scale).toInt().coerceAtLeast(1)
+        val fittedHeight = (height * scale).toInt().coerceAtLeast(1)
+        try { virtualDisplay?.resize(fittedWidth, fittedHeight, densityDpi) } catch (_: RuntimeException) { }
     }
 
     fun drainUntilStopped(): OutputCompletion {
@@ -372,37 +381,6 @@ internal class AvcRecordingPipeline(
     }
 
     fun takeOutput(): RecordingOutput? = output.also { output = null }
-
-    private fun selectConfiguration(): SelectedVideoConfiguration? {
-        val candidates = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.asSequence()
-            .filter { it.isEncoder && it.supportedTypes.any { type -> type.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) } }
-            .mapNotNull { info ->
-                runCatching {
-                    val capabilities = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-                    if (MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface !in capabilities.colorFormats) return@runCatching null
-                    val video = capabilities.videoCapabilities ?: return@runCatching null
-                    EncoderCandidate(
-                        name = info.name,
-                        hardwareAccelerated = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) info.isHardwareAccelerated else !isKnownSoftwareCodec(info.name),
-                        widthAlignment = video.widthAlignment,
-                        heightAlignment = video.heightAlignment,
-                        minimumWidth = video.supportedWidths.lower,
-                        maximumWidth = video.supportedWidths.upper,
-                        minimumHeight = video.supportedHeights.lower,
-                        maximumHeight = video.supportedHeights.upper,
-                        minimumBitsPerSecond = video.bitrateRange.lower,
-                        maximumBitsPerSecond = video.bitrateRange.upper,
-                        supports = { width, height, fps, bitrate ->
-                            video.areSizeAndRateSupported(width, height, fps.toDouble()) && bitrate in video.bitrateRange
-                        },
-                    )
-                }.getOrNull()
-            }.toList()
-        return VideoConfigurationSelector.select(sourceWidth, sourceHeight, candidates)
-    }
-
-    private fun isKnownSoftwareCodec(name: String): Boolean =
-        name.startsWith("OMX.google.", true) || name.startsWith("c2.android.", true)
 
     private data class AudioResources(
         val record: AudioRecord,

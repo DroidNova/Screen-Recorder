@@ -27,14 +27,21 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.AudioMode
+import com.droidnova.screenrecorder.domain.recording.CountdownConfiguration
+import com.droidnova.screenrecorder.domain.recording.MaximumDurationPolicy
+import com.droidnova.screenrecorder.domain.recording.RecordingSettings
 import com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot
 import com.droidnova.screenrecorder.recording.ScreenRecordingService
+import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
+import com.droidnova.screenrecorder.recording.AvcCapabilityProvider
 import com.droidnova.screenrecorder.ui.ScreenRecorderApp
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -49,6 +56,9 @@ class MainActivity : ComponentActivity() {
     private val _selectedAudioMode = MutableStateFlow(AudioMode.None)
     private val selectedAudioMode = _selectedAudioMode.asStateFlow()
     private var requestedSessionAudioMode = AudioMode.None
+    private val availableVideoConfigurations = MutableStateFlow<List<AvailableVideoConfiguration>>(emptyList())
+    private val selectedVideoConfiguration = MutableStateFlow<AvailableVideoConfiguration?>(null)
+    private val countdownSeconds = MutableStateFlow(0)
     private val statusMessage = mutableStateOf<Int?>(null)
     private val recordingRuntime = mutableStateOf(RecordingRuntimeSnapshot())
     private var serviceBinder: ScreenRecordingService.LocalBinder? = null
@@ -95,6 +105,16 @@ class MainActivity : ComponentActivity() {
         val density = resources.displayMetrics.density
         val width = (configuration.screenWidthDp * density).toInt()
         val height = (configuration.screenHeightDp * density).toInt()
+        val video = selectedVideoConfiguration.value ?: return@registerForActivityResult
+        val settings = RecordingSettings(
+            preset = video.preset,
+            audioMode = requestedSessionAudioMode,
+            resolution = video.resolution,
+            frameRate = video.frameRate,
+            videoBitrate = video.bitrate,
+            countdown = if (countdownSeconds.value == 0) CountdownConfiguration.None else CountdownConfiguration.Duration(countdownSeconds.value),
+            maximumDuration = MaximumDurationPolicy.Unlimited,
+        )
         val serviceIntent = ScreenRecordingService.startIntent(
             this,
             result.resultCode,
@@ -102,7 +122,8 @@ class MainActivity : ComponentActivity() {
             width,
             height,
             configuration.densityDpi,
-            requestedSessionAudioMode,
+            settings,
+            video.shortEdge,
         )
         try {
             backgroundWhenRecordingStarts = true
@@ -125,13 +146,34 @@ class MainActivity : ComponentActivity() {
         showMicrophonePermissionExplanation.value = savedInstanceState?.getBoolean(STATE_SHOW_MICROPHONE_EXPLANATION) == true
         _selectedAudioMode.value = savedInstanceState?.getString(STATE_SELECTED_AUDIO_MODE)?.toAudioMode() ?: AudioMode.None
         requestedSessionAudioMode = savedInstanceState?.getString(STATE_REQUESTED_AUDIO_MODE)?.toAudioMode() ?: selectedAudioMode.value
+        countdownSeconds.value = savedInstanceState?.getInt(STATE_COUNTDOWN_SECONDS) ?: 0
+        val savedShortEdge = savedInstanceState?.getInt(STATE_VIDEO_SHORT_EDGE) ?: 720
+        val savedFrameRate = savedInstanceState?.getInt(STATE_VIDEO_FRAME_RATE) ?: 30
+        val savedBitrate = savedInstanceState?.getInt(STATE_VIDEO_BITRATE) ?: 6_000_000
+        lifecycleScope.launch {
+            val configuration = resources.configuration
+            val density = resources.displayMetrics.density
+            val width = (configuration.screenWidthDp * density).toInt()
+            val height = (configuration.screenHeightDp * density).toInt()
+            val options = withContext(Dispatchers.Default) { AvcCapabilityProvider.query(width, height) }
+            availableVideoConfigurations.value = options
+            selectedVideoConfiguration.value = options.firstOrNull {
+                it.shortEdge == savedShortEdge && it.frameRate.framesPerSecond == savedFrameRate &&
+                    it.bitrate.bitsPerSecond == savedBitrate
+            } ?: options.firstOrNull { it.preset == com.droidnova.screenrecorder.domain.recording.RecordingPreset.Balanced }
+                ?: options.firstOrNull()
+        }
         enableEdgeToEdge()
         setContent {
             val runtime = recordingRuntime.value
             val audioMode by selectedAudioMode.collectAsState()
+            val videoOptions by availableVideoConfigurations.collectAsState()
+            val selectedVideo by selectedVideoConfiguration.collectAsState()
+            val countdown by countdownSeconds.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
                 elapsedSeconds = runtime.elapsedSeconds,
+                countdownRemainingSeconds = runtime.countdownRemainingSeconds,
                 statusMessage = statusMessage.value,
                 onStartRecording = ::requestRecordingPermissions,
                 onStopRecording = { serviceBinder?.requestStop() ?: startService(ScreenRecordingService.stopIntent(this)) },
@@ -145,6 +187,11 @@ class MainActivity : ComponentActivity() {
                 },
                 audioMode = audioMode,
                 onAudioModeSelected = { _selectedAudioMode.value = it },
+                videoOptions = videoOptions,
+                selectedVideo = selectedVideo,
+                onVideoSelected = { selectedVideoConfiguration.value = it },
+                countdownSeconds = countdown,
+                onCountdownSelected = { countdownSeconds.value = it },
             )
             if (showNotificationPermissionExplanation.value) {
                 AlertDialog(
@@ -203,6 +250,12 @@ class MainActivity : ComponentActivity() {
         outState.putBoolean(STATE_SHOW_MICROPHONE_EXPLANATION, showMicrophonePermissionExplanation.value)
         outState.putString(STATE_SELECTED_AUDIO_MODE, selectedAudioMode.value.name)
         outState.putString(STATE_REQUESTED_AUDIO_MODE, requestedSessionAudioMode.name)
+        outState.putInt(STATE_COUNTDOWN_SECONDS, countdownSeconds.value)
+        selectedVideoConfiguration.value?.let {
+            outState.putInt(STATE_VIDEO_SHORT_EDGE, it.shortEdge)
+            outState.putInt(STATE_VIDEO_FRAME_RATE, it.frameRate.framesPerSecond)
+            outState.putInt(STATE_VIDEO_BITRATE, it.bitrate.bitsPerSecond)
+        }
         super.onSaveInstanceState(outState)
     }
 
@@ -222,6 +275,10 @@ class MainActivity : ComponentActivity() {
 
     private fun requestRecordingPermissions() {
         if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
+        if (selectedVideoConfiguration.value == null) {
+            statusMessage.value = R.string.recording_settings_unavailable
+            return
+        }
         statusMessage.value = null
         requestedSessionAudioMode = selectedAudioMode.value
         if (requestedSessionAudioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
@@ -274,9 +331,10 @@ class MainActivity : ComponentActivity() {
 
     private fun applyRuntimeSnapshot(snapshot: RecordingRuntimeSnapshot) {
         recordingRuntime.value = snapshot
-        if (snapshot.state is RecordingState.Recording && backgroundWhenRecordingStarts) {
+        if (snapshot.state is RecordingState.Countdown && backgroundWhenRecordingStarts) {
             backgroundWhenRecordingStarts = false
             moveTaskToBack(true)
+            serviceBinder?.acknowledgeBackgrounded()
         } else if (
             snapshot.state == RecordingState.Idle ||
             snapshot.state is RecordingState.Failed ||
@@ -315,5 +373,9 @@ class MainActivity : ComponentActivity() {
         const val STATE_SHOW_MICROPHONE_EXPLANATION = "show_microphone_explanation"
         const val STATE_SELECTED_AUDIO_MODE = "selected_audio_mode"
         const val STATE_REQUESTED_AUDIO_MODE = "requested_audio_mode"
+        const val STATE_COUNTDOWN_SECONDS = "countdown_seconds"
+        const val STATE_VIDEO_SHORT_EDGE = "video_short_edge"
+        const val STATE_VIDEO_FRAME_RATE = "video_frame_rate"
+        const val STATE_VIDEO_BITRATE = "video_bitrate"
     }
 }

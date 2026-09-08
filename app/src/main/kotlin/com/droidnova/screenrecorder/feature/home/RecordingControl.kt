@@ -6,6 +6,6 @@ enum class RecordingControl { Start, Stop, Unavailable }
 
 fun RecordingState.availableRecordingControl(): RecordingControl = when (this) {
     RecordingState.Idle -> RecordingControl.Start
-    is RecordingState.Recording -> RecordingControl.Stop
+    is RecordingState.Countdown, is RecordingState.Recording -> RecordingControl.Stop
     else -> RecordingControl.Unavailable
 }

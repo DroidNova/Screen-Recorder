@@ -12,6 +12,9 @@ import android.content.pm.ServiceInfo
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.hardware.display.DisplayManager
+import android.graphics.Point
+import android.view.WindowManager
 import android.os.Binder
 import android.os.Build
 import android.os.Handler
@@ -23,6 +26,13 @@ import com.droidnova.screenrecorder.MainActivity
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.domain.recording.FailureStage
 import com.droidnova.screenrecorder.domain.recording.AudioMode
+import com.droidnova.screenrecorder.domain.recording.CapabilityRejection
+import com.droidnova.screenrecorder.domain.recording.CountdownConfiguration
+import com.droidnova.screenrecorder.domain.recording.FrameRate
+import com.droidnova.screenrecorder.domain.recording.RecordingPreset
+import com.droidnova.screenrecorder.domain.recording.RecordingSettings
+import com.droidnova.screenrecorder.domain.recording.VideoBitrate
+import com.droidnova.screenrecorder.domain.recording.CapabilityValidation
 import com.droidnova.screenrecorder.domain.recording.RecordingCommand
 import com.droidnova.screenrecorder.domain.recording.RecordingEvent
 import com.droidnova.screenrecorder.domain.recording.RecordingFailure
@@ -35,6 +45,7 @@ import com.droidnova.screenrecorder.domain.recording.TransitionResult
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +53,7 @@ import kotlinx.coroutines.flow.asStateFlow
 data class RecordingRuntimeSnapshot(
     val state: RecordingState = RecordingState.Idle,
     val elapsedSeconds: Long = 0,
+    val countdownRemainingSeconds: Int? = null,
 )
 
 class ScreenRecordingService : Service() {
@@ -49,6 +61,7 @@ class ScreenRecordingService : Service() {
         val runtime: StateFlow<RecordingRuntimeSnapshot> get() = this@ScreenRecordingService.runtime
         fun requestStop() { this@ScreenRecordingService.requestStop(StopReason.UserRequested) }
         fun acknowledgeTerminal() = dispatch(RecordingCommand.Acknowledge)
+        fun acknowledgeBackgrounded() { countdownHandoff.countDown() }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -58,11 +71,27 @@ class ScreenRecordingService : Service() {
     private val cleanupStarted = AtomicBoolean(false)
     private var pipeline: AvcRecordingPipeline? = null
     private var recordingStartedAtMillis: Long? = null
+    private var countdownHandoff = CountDownLatch(1)
     private val _runtime = MutableStateFlow(RecordingRuntimeSnapshot())
     private val runtime: StateFlow<RecordingRuntimeSnapshot> = _runtime.asStateFlow()
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() { requestStop(StopReason.ProjectionRevoked) }
+        override fun onCapturedContentResize(width: Int, height: Int) {
+            pipeline?.resizeCapturedContent(width, height)
+        }
+    }
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) updateLegacyDisplaySize()
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, mainHandler)
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -90,8 +119,17 @@ class ScreenRecordingService : Service() {
         val audioMode = intent.getStringExtra(EXTRA_AUDIO_MODE)?.let { value ->
             AudioMode.entries.firstOrNull { it.name == value }
         }
+        val preset = intent.getStringExtra(EXTRA_PRESET)?.let { value -> RecordingPreset.entries.firstOrNull { it.name == value } }
+        val shortEdge = intent.getIntExtra(EXTRA_SHORT_EDGE, 0)
+        val frameRate = intent.getIntExtra(EXTRA_FRAME_RATE, 0)
+        val bitrate = intent.getIntExtra(EXTRA_BITRATE, 0)
+        val encodedWidth = intent.getIntExtra(EXTRA_ENCODED_WIDTH, 0)
+        val encodedHeight = intent.getIntExtra(EXTRA_ENCODED_HEIGHT, 0)
+        val countdownSeconds = intent.getIntExtra(EXTRA_COUNTDOWN_SECONDS, -1)
         if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0 ||
-            audioMode == null || audioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
+            audioMode == null || preset == null || shortEdge <= 0 || frameRate <= 0 || bitrate <= 0 || encodedWidth <= 0 || encodedHeight <= 0 ||
+            countdownSeconds !in setOf(0, 3, 5, 15) ||
+            audioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
         ) {
             stopIfIdle()
             return
@@ -99,7 +137,16 @@ class ScreenRecordingService : Service() {
         synchronized(transitionLock) {
             if (_runtime.value.state != RecordingState.Idle) return
             cleanupStarted.set(false)
-            applyTransitionLocked(RecordingCommand.Start(Milestone5Settings.default.copy(audioMode = requireNotNull(audioMode))))
+            countdownHandoff = CountDownLatch(1)
+            val requestedSettings = Milestone5Settings.default.copy(
+                preset = requireNotNull(preset),
+                audioMode = requireNotNull(audioMode),
+                resolution = com.droidnova.screenrecorder.domain.recording.CaptureResolution(encodedWidth, encodedHeight),
+                frameRate = FrameRate(frameRate),
+                videoBitrate = VideoBitrate(bitrate),
+                countdown = if (countdownSeconds == 0) CountdownConfiguration.None else CountdownConfiguration.Duration(countdownSeconds),
+            )
+            applyTransitionLocked(RecordingCommand.Start(requestedSettings))
         }
         if (audioMode != AudioMode.None && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             terminalFailure(RecordingFailure.RequiredPermissionDenied(RequiredPermission.Microphone))
@@ -111,15 +158,50 @@ class ScreenRecordingService : Service() {
             terminalFailure(RecordingFailure.UnexpectedInternalFailure)
             return
         }
-        encoderExecutor.execute { runSession(resultCode, consentData, width, height, densityDpi, requireNotNull(audioMode)) }
+        encoderExecutor.execute {
+            runSession(
+                resultCode, consentData, width, height, densityDpi, requireNotNull(audioMode),
+                shortEdge, frameRate, bitrate, encodedWidth, encodedHeight,
+            )
+        }
     }
 
     private fun stopIfIdle() {
         if (_runtime.value.state == RecordingState.Idle) stopSelf()
     }
 
-    private fun runSession(resultCode: Int, consentData: Intent, width: Int, height: Int, densityDpi: Int, audioMode: AudioMode) {
+    private fun runSession(
+        resultCode: Int,
+        consentData: Intent,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        audioMode: AudioMode,
+        shortEdge: Int,
+        frameRate: Int,
+        bitrate: Int,
+        encodedWidth: Int,
+        encodedHeight: Int,
+    ) {
         try {
+            val available = AvcCapabilityProvider.query(width, height)
+            val selected = available.firstOrNull {
+                it.shortEdge == shortEdge && it.resolution.width == encodedWidth && it.resolution.height == encodedHeight &&
+                    it.frameRate.framesPerSecond == frameRate && it.bitrate.bitsPerSecond == bitrate
+            } ?: throw RecordingPipelineException(
+                RecordingFailure.UnsupportedCapability(CapabilityRejection.FrameRateForResolution),
+            )
+            val activeSettings = (_runtime.value.state as? RecordingState.Preparing)?.settings
+                ?: throw RecordingPipelineException(RecordingFailure.UnexpectedInternalFailure)
+            val validation = AvcCapabilityProvider.domainCapabilities(available)?.validate(activeSettings)
+            if (validation is CapabilityValidation.Unsupported) {
+                throw RecordingPipelineException(RecordingFailure.UnsupportedCapability(validation.reason))
+            }
+            dispatch(RecordingEvent.PreparationReady)
+            if (!runCountdown()) {
+                completeWithoutCapture()
+                return
+            }
             val manager = getSystemService(MediaProjectionManager::class.java)
             val projection = manager.getMediaProjection(resultCode, consentData)
                 ?: throw RecordingPipelineException(RecordingFailure.ProjectionUnavailable)
@@ -129,10 +211,15 @@ class ScreenRecordingService : Service() {
                 try { projection.stop() } catch (_: RuntimeException) { }
                 throw RecordingPipelineException(RecordingFailure.StorageFailure)
             }
-            val ownedPipeline = AvcRecordingPipeline(projection, width, height, densityDpi, audioMode, output)
+            val videoConfiguration = SelectedVideoConfiguration(
+                selected.encoderName,
+                selected.resolution,
+                selected.frameRate.framesPerSecond,
+                selected.bitrate.bitsPerSecond,
+            )
+            val ownedPipeline = AvcRecordingPipeline(projection, width, height, densityDpi, audioMode, videoConfiguration, output)
             pipeline = ownedPipeline
             ownedPipeline.start(mainHandler, projectionCallback)
-            dispatch(RecordingEvent.PreparationReady)
             dispatch(RecordingEvent.CountdownFinished)
             recordingStartedAtMillis = SystemClock.elapsedRealtime()
             mainHandler.post(elapsedUpdater)
@@ -144,9 +231,59 @@ class ScreenRecordingService : Service() {
         }
     }
 
+    private fun runCountdown(): Boolean {
+        val state = _runtime.value.state as? RecordingState.Countdown ?: return false
+        val seconds = (state.settings.countdown as? CountdownConfiguration.Duration)?.seconds ?: 0
+        if (seconds == 0) {
+            try {
+                countdownHandoff.await()
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                requestStop(StopReason.ApplicationShutdown)
+                return false
+            }
+            return _runtime.value.state is RecordingState.Countdown
+        }
+        val deadline = SystemClock.elapsedRealtime() + seconds * 1_000L
+        var previous = -1
+        while (_runtime.value.state is RecordingState.Countdown) {
+            val remaining = ((deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0) + 999) / 1_000
+            if (remaining.toInt() != previous) {
+                previous = remaining.toInt()
+                updateCountdown(previous)
+            }
+            if (remaining == 0L) return true
+            try {
+                Thread.sleep(minOf(200L, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                requestStop(StopReason.ApplicationShutdown)
+                return false
+            }
+        }
+        return false
+    }
+
+    private fun updateCountdown(remaining: Int) = synchronized(transitionLock) {
+        val current = _runtime.value
+        if (current.state is RecordingState.Countdown) {
+            _runtime.value = current.copy(countdownRemainingSeconds = remaining)
+            updateNotification(current.state)
+        }
+    }
+
+    private fun completeWithoutCapture() {
+        if (!cleanupStarted.compareAndSet(false, true)) return
+        dispatch(RecordingEvent.FinalizationSucceeded)
+        finishService()
+    }
+
     private fun requestStop(reason: StopReason): Boolean {
         val accepted = dispatch(RecordingCommand.Stop(reason)) is TransitionResult.Accepted
-        if (accepted) pipeline?.requestStop()
+        if (accepted) {
+            countdownHandoff.countDown()
+            pipeline?.requestStop()
+        }
         return accepted
     }
 
@@ -192,6 +329,14 @@ class ScreenRecordingService : Service() {
         mainHandler.removeCallbacks(elapsedUpdater)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun updateLegacyDisplaySize() {
+        val display = getSystemService(WindowManager::class.java).defaultDisplay
+        val size = Point()
+        display.getRealSize(size)
+        pipeline?.resizeCapturedContent(size.x, size.y)
     }
 
     private fun dispatch(input: RecordingInput): TransitionResult = synchronized(transitionLock) {
@@ -253,7 +398,10 @@ class ScreenRecordingService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_recording)
             .setContentTitle(getString(R.string.recording_notification_title))
-            .setContentText(getString(R.string.recording_notification_body))
+            .setContentText(
+                _runtime.value.countdownRemainingSeconds?.let { getString(R.string.recording_countdown_notification, it) }
+                    ?: getString(R.string.recording_notification_body),
+            )
             .setContentIntent(reopen)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -268,11 +416,11 @@ class ScreenRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         mainHandler.removeCallbacks(elapsedUpdater)
-        val ownedPipeline = pipeline
-        if (ownedPipeline != null && !cleanupStarted.get()) {
+        if (!cleanupStarted.get()) {
             requestStop(StopReason.ApplicationShutdown)
-            ownedPipeline.requestStop()
+            pipeline?.requestStop()
         }
         encoderExecutor.shutdown()
         super.onDestroy()
@@ -287,6 +435,13 @@ class ScreenRecordingService : Service() {
         private const val EXTRA_SOURCE_HEIGHT = "source_height"
         private const val EXTRA_DENSITY_DPI = "density_dpi"
         private const val EXTRA_AUDIO_MODE = "audio_mode"
+        private const val EXTRA_PRESET = "preset"
+        private const val EXTRA_SHORT_EDGE = "short_edge"
+        private const val EXTRA_FRAME_RATE = "frame_rate"
+        private const val EXTRA_BITRATE = "bitrate"
+        private const val EXTRA_ENCODED_WIDTH = "encoded_width"
+        private const val EXTRA_ENCODED_HEIGHT = "encoded_height"
+        private const val EXTRA_COUNTDOWN_SECONDS = "countdown_seconds"
         private const val CHANNEL_ID = "screen_recording"
         private const val NOTIFICATION_ID = 41
         private val filenameSequence = AtomicLong()
@@ -298,12 +453,20 @@ class ScreenRecordingService : Service() {
             width: Int,
             height: Int,
             densityDpi: Int,
-            audioMode: AudioMode,
+            settings: RecordingSettings,
+            shortEdge: Int,
         ) =
             Intent(context, ScreenRecordingService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode).putExtra(EXTRA_CONSENT_DATA, data)
                 .putExtra(EXTRA_SOURCE_WIDTH, width).putExtra(EXTRA_SOURCE_HEIGHT, height).putExtra(EXTRA_DENSITY_DPI, densityDpi)
-                .putExtra(EXTRA_AUDIO_MODE, audioMode.name)
+                .putExtra(EXTRA_AUDIO_MODE, settings.audioMode.name)
+                .putExtra(EXTRA_PRESET, settings.preset.name)
+                .putExtra(EXTRA_SHORT_EDGE, shortEdge)
+                .putExtra(EXTRA_FRAME_RATE, settings.frameRate.framesPerSecond)
+                .putExtra(EXTRA_BITRATE, settings.videoBitrate.bitsPerSecond)
+                .putExtra(EXTRA_ENCODED_WIDTH, settings.resolution.width)
+                .putExtra(EXTRA_ENCODED_HEIGHT, settings.resolution.height)
+                .putExtra(EXTRA_COUNTDOWN_SECONDS, (settings.countdown as? CountdownConfiguration.Duration)?.seconds ?: 0)
 
         fun stopIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_STOP)
     }

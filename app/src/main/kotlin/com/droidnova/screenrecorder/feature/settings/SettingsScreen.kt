@@ -28,12 +28,17 @@ import com.droidnova.screenrecorder.domain.recording.AudioMode
     audioMode: AudioMode = AudioMode.None,
     audioModeEnabled: Boolean = true,
     deviceAudioAvailable: Boolean = true,
+    countdownSeconds: Int = 0,
+    onCountdownSelected: (Int) -> Unit = {},
     onAudioModeSelected: (AudioMode) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
         Text(stringResource(R.string.settings_supporting), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        CaptureSection(audioMode, audioModeEnabled, deviceAudioAvailable, onAudioModeSelected)
+        CaptureSection(
+            audioMode, audioModeEnabled, deviceAudioAvailable, onAudioModeSelected,
+            countdownSeconds, onCountdownSelected,
+        )
         Section(R.string.appearance, listOf(R.string.app_theme to R.string.system_default))
         Section(R.string.about, listOf(R.string.version to R.string.version_value))
     }
@@ -45,6 +50,8 @@ private fun CaptureSection(
     enabled: Boolean,
     deviceAudioAvailable: Boolean,
     onSelected: (AudioMode) -> Unit,
+    countdownSeconds: Int,
+    onCountdownSelected: (Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.Small)) {
         Text(stringResource(R.string.capture), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
@@ -76,6 +83,24 @@ private fun CaptureSection(
                                 )
                             }
                         }
+                    }
+                }
+                Text(stringResource(R.string.countdown), style = MaterialTheme.typography.titleMedium)
+                listOf(0, 3, 5, 15).forEach { seconds ->
+                    Row(
+                        Modifier.fillMaxWidth().selectable(
+                            selected = countdownSeconds == seconds,
+                            enabled = enabled,
+                            role = Role.RadioButton,
+                            onClick = { onCountdownSelected(seconds) },
+                        ).padding(vertical = Spacing.Small),
+                    ) {
+                        RadioButton(selected = countdownSeconds == seconds, onClick = null, enabled = enabled)
+                        Text(
+                            if (seconds == 0) stringResource(R.string.countdown_off)
+                            else stringResource(R.string.countdown_seconds, seconds),
+                            modifier = Modifier.padding(start = Spacing.Small),
+                        )
                     }
                 }
             }

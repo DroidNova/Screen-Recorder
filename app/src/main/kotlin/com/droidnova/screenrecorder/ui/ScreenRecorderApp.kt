@@ -31,18 +31,25 @@ import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.AudioMode
+import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderApp(
     recordingState: RecordingState = RecordingState.Idle,
     elapsedSeconds: Long = 0,
+    countdownRemainingSeconds: Int? = null,
     statusMessage: Int? = null,
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     onTerminalStateShown: () -> Unit = {},
     audioMode: AudioMode = AudioMode.None,
     onAudioModeSelected: (AudioMode) -> Unit = {},
+    videoOptions: List<AvailableVideoConfiguration> = emptyList(),
+    selectedVideo: AvailableVideoConfiguration? = null,
+    onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
+    countdownSeconds: Int = 0,
+    onCountdownSelected: (Int) -> Unit = {},
 ) {
     ScreenRecorderTheme {
         val navController = rememberNavController()
@@ -93,9 +100,14 @@ fun ScreenRecorderApp(
                             HomeScreen(
                                 recordingState = recordingState,
                                 elapsedSeconds = elapsedSeconds,
+                                countdownRemainingSeconds = countdownRemainingSeconds,
                                 statusMessage = statusMessage?.let { stringResource(it) },
                                 onStartRecording = onStartRecording,
                                 onStopRecording = onStopRecording,
+                                videoOptions = videoOptions,
+                                selectedVideo = selectedVideo,
+                                onVideoSelected = onVideoSelected,
+                                audioMode = audioMode,
                             )
                         }
                         composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
@@ -105,6 +117,8 @@ fun ScreenRecorderApp(
                                 audioModeEnabled = recordingState == RecordingState.Idle,
                                 deviceAudioAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q,
                                 onAudioModeSelected = onAudioModeSelected,
+                                countdownSeconds = countdownSeconds,
+                                onCountdownSelected = onCountdownSelected,
                             )
                         }
                     }
