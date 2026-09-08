@@ -32,6 +32,8 @@ internal class AvcRecordingPipeline(
     private var samplesWritten = 0
     private var lastPresentationTimeUs = -1L
     private val stopRequested = AtomicBoolean(false)
+    private var projectionCallbackRegistered = false
+    private var released = false
 
     fun start(callbackHandler: Handler, projectionCallback: MediaProjection.Callback) {
         val selected = selectConfiguration()
@@ -60,6 +62,7 @@ internal class AvcRecordingPipeline(
         }
         try {
             projection.registerCallback(projectionCallback, callbackHandler)
+            projectionCallbackRegistered = true
             virtualDisplay = projection.createVirtualDisplay(
                 "ScreenRecorderCapture",
                 selected.resolution.width,
@@ -121,14 +124,22 @@ internal class AvcRecordingPipeline(
         }
     }
 
+    @Synchronized
     fun release(projectionCallback: MediaProjection.Callback): Boolean {
+        if (released) return true
+        released = true
         var finalizationSucceeded = true
         try { virtualDisplay?.release() } catch (_: RuntimeException) {} finally { virtualDisplay = null }
-        try { projection.unregisterCallback(projectionCallback) } catch (_: RuntimeException) {}
+        try {
+            if (projectionCallbackRegistered) projection.unregisterCallback(projectionCallback)
+        } catch (_: RuntimeException) {
+        } finally {
+            projectionCallbackRegistered = false
+        }
         try { projection.stop() } catch (_: RuntimeException) {}
+        try { inputSurface?.release() } catch (_: RuntimeException) {} finally { inputSurface = null }
         try { if (encoderStarted) encoder?.stop() } catch (_: RuntimeException) {} finally { encoderStarted = false }
         try { encoder?.release() } catch (_: RuntimeException) {} finally { encoder = null }
-        try { inputSurface?.release() } catch (_: RuntimeException) {} finally { inputSurface = null }
         try { if (muxerStarted) muxer?.stop() } catch (_: RuntimeException) { finalizationSucceeded = false } finally { muxerStarted = false }
         try { muxer?.release() } catch (_: RuntimeException) {} finally { muxer = null }
         output?.closeDescriptor()

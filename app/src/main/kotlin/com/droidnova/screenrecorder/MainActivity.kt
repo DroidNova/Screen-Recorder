@@ -1,26 +1,51 @@
 package com.droidnova.screenrecorder
 
-import android.os.Bundle
 import android.app.Activity
-import android.content.Intent
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
-import com.droidnova.screenrecorder.ui.ScreenRecorderApp
+import androidx.lifecycle.lifecycleScope
 import com.droidnova.screenrecorder.recording.ScreenRecordingService
+import com.droidnova.screenrecorder.ui.ScreenRecorderApp
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     private var consentLaunchPending = false
     private val statusMessage = mutableStateOf<Int?>(null)
+    private val recordingRuntime = mutableStateOf(com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot())
+    private var serviceBinder: ScreenRecordingService.LocalBinder? = null
+    private var runtimeCollection: Job? = null
+    private var serviceBound = false
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            val connected = service as ScreenRecordingService.LocalBinder
+            serviceBinder = connected
+            recordingRuntime.value = connected.runtime.value
+            runtimeCollection = lifecycleScope.launch {
+                connected.runtime.collect { recordingRuntime.value = it }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            runtimeCollection?.cancel()
+            runtimeCollection = null
+            serviceBinder = null
+            recordingRuntime.value = com.droidnova.screenrecorder.recording.RecordingRuntimeSnapshot()
+        }
+    }
     private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         consentLaunchPending = false
         val data = result.data
@@ -45,28 +70,41 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            val recordingState by ScreenRecordingService.state.collectAsState()
-            val elapsedSeconds by ScreenRecordingService.elapsedSeconds.collectAsState()
+            val runtime = recordingRuntime.value
             ScreenRecorderApp(
-                recordingState = recordingState,
-                elapsedSeconds = elapsedSeconds,
+                recordingState = runtime.state,
+                elapsedSeconds = runtime.elapsedSeconds,
                 statusMessage = statusMessage.value,
                 onStartRecording = ::requestProjectionConsent,
-                onStopRecording = { startService(ScreenRecordingService.stopIntent(this)) },
+                onStopRecording = { serviceBinder?.requestStop() ?: startService(ScreenRecordingService.stopIntent(this)) },
                 onTerminalStateShown = {
-                    statusMessage.value = if (recordingState is com.droidnova.screenrecorder.domain.recording.RecordingState.Completed) {
+                    statusMessage.value = if (recordingRuntime.value.state is com.droidnova.screenrecorder.domain.recording.RecordingState.Completed) {
                         R.string.recording_completed
                     } else {
                         R.string.recording_failed
                     }
-                    ScreenRecordingService.acknowledgeTerminal()
+                    serviceBinder?.acknowledgeTerminal()
                 },
             )
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        serviceBound = bindService(Intent(this, ScreenRecordingService::class.java), serviceConnection, BIND_AUTO_CREATE)
+    }
+
+    override fun onStop() {
+        runtimeCollection?.cancel()
+        runtimeCollection = null
+        if (serviceBound) unbindService(serviceConnection)
+        serviceBound = false
+        serviceBinder = null
+        super.onStop()
+    }
+
     private fun requestProjectionConsent() {
-        if (consentLaunchPending || ScreenRecordingService.state.value != com.droidnova.screenrecorder.domain.recording.RecordingState.Idle) return
+        if (consentLaunchPending || recordingRuntime.value.state != com.droidnova.screenrecorder.domain.recording.RecordingState.Idle) return
         consentLaunchPending = true
         statusMessage.value = null
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
