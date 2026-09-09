@@ -2,8 +2,10 @@ package com.droidnova.screenrecorder.feature.recordings
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -85,6 +87,8 @@ fun RecordingsScreen(
     var result by remember { mutableStateOf<LibraryResult?>(null) }
     var refreshJob by remember { mutableStateOf<Job?>(null) }
     var renameItem by remember { mutableStateOf<LibraryRecording?>(null) }
+    var renameSubmitting by remember { mutableStateOf(false) }
+    var renameError by remember { mutableStateOf<Int?>(null) }
     var deleteItem by remember { mutableStateOf<LibraryRecording?>(null) }
     var pendingOperation by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingUri by rememberSaveable { mutableStateOf<String?>(null) }
@@ -108,7 +112,10 @@ fun RecordingsScreen(
         val uri = pendingUri?.let(Uri::parse)
         val name = pendingName
         pendingOperation = null; pendingUri = null; pendingName = null
-        if (activityResult.resultCode != Activity.RESULT_OK || operation == null || uri == null) return@rememberLauncherForActivityResult
+        if (activityResult.resultCode != Activity.RESULT_OK || operation == null || uri == null) {
+            if (operation == ConsentOperation.Rename) renameSubmitting = false
+            return@rememberLauncherForActivityResult
+        }
         if (operation == ConsentOperation.Delete && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             RecordingThumbnailCache.remove(uri); refresh(); return@rememberLauncherForActivityResult
         }
@@ -116,9 +123,16 @@ fun RecordingsScreen(
             val modified = withContext(Dispatchers.IO) {
                 if (operation == ConsentOperation.Rename && name != null) repository.rename(uri, name) else repository.delete(uri)
             }
-            if (modified is ModificationResult.Success || modified is ModificationResult.Missing) {
+            if (modified is ModificationResult.Success || operation == ConsentOperation.Delete && modified is ModificationResult.Missing) {
                 RecordingThumbnailCache.remove(uri); refresh()
-            } else showMessage(context.getString(R.string.recording_action_failed))
+                if (operation == ConsentOperation.Rename) {
+                    renameSubmitting = false
+                    renameItem = null
+                }
+            } else {
+                if (operation == ConsentOperation.Rename) renameSubmitting = false
+                showMessage(context.getString(if (modified is ModificationResult.Missing) R.string.recording_unavailable_file else R.string.recording_action_failed))
+            }
         }
     }
 
@@ -135,11 +149,25 @@ fun RecordingsScreen(
                 else repository.delete(item.contentUri)
             }
             when (outcome) {
-                ModificationResult.Success, ModificationResult.Missing -> {
+                ModificationResult.Success -> {
                     RecordingThumbnailCache.remove(item.contentUri); refresh()
+                    if (operation == ConsentOperation.Rename) {
+                        renameSubmitting = false
+                        renameItem = null
+                    }
+                }
+                ModificationResult.Missing -> {
+                    RecordingThumbnailCache.remove(item.contentUri); refresh()
+                    if (operation == ConsentOperation.Rename) {
+                        renameSubmitting = false
+                        showMessage(context.getString(R.string.recording_unavailable_file))
+                    }
                 }
                 is ModificationResult.ConsentRequired -> launchConsent(operation, item, name, outcome.intentSender)
-                ModificationResult.Failed -> showMessage(context.getString(R.string.recording_action_failed))
+                ModificationResult.Failed -> {
+                    renameSubmitting = false
+                    showMessage(context.getString(R.string.recording_action_failed))
+                }
             }
         }
     }
@@ -165,13 +193,24 @@ fun RecordingsScreen(
             verticalArrangement = Arrangement.spacedBy(Spacing.Component),
         ) {
             items(state.recordings, key = { it.contentUri.toString() }) { item ->
-                RecordingCard(item, { play(context, item.contentUri, showMessage) }, { share(context, item.contentUri, showMessage) },
+                RecordingCard(item, { play(context, item.contentUri, showMessage) { refresh() } }, { share(context, item.contentUri, showMessage) },
                     { renameItem = item }, { deleteItem = item })
             }
         }
     }
 
-    renameItem?.let { item -> RenameDialog(item, { renameItem = null }, { name -> renameItem = null; modify(ConsentOperation.Rename, item, name) }) }
+    renameItem?.let { item -> RenameDialog(
+        item = item,
+        submitting = renameSubmitting,
+        externalError = renameError,
+        dismiss = { if (!renameSubmitting) { renameItem = null; renameError = null } },
+        confirm = { rawName ->
+            normalizeUserRecordingName(rawName).fold(
+                onSuccess = { name -> renameError = null; renameSubmitting = true; modify(ConsentOperation.Rename, item, name) },
+                onFailure = { renameError = R.string.invalid_recording_name },
+            )
+        },
+    ) }
     deleteItem?.let { item -> AlertDialog(
         onDismissRequest = { deleteItem = null }, title = { Text(stringResource(R.string.delete_recording)) },
         text = { Text(stringResource(R.string.delete_recording_confirmation, item.displayName)) },
@@ -194,7 +233,15 @@ fun RecordingsScreen(
 
 @Composable private fun RecordingCard(item: LibraryRecording, play: () -> Unit, share: () -> Unit, rename: () -> Unit, delete: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
-    androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth().clickable(onClickLabel = stringResource(R.string.play_recording), onClick = play)) {
+    var launching by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth().clickable(onClickLabel = stringResource(R.string.play_recording)) {
+        if (!launching) {
+            launching = true
+            play()
+            scope.launch { delay(750); launching = false }
+        }
+    }) {
         Row(Modifier.padding(Spacing.Small), verticalAlignment = Alignment.CenterVertically) {
             Thumbnail(item, Modifier.fillMaxWidth(0.42f).aspectRatio(16f / 9f))
             Column(Modifier.weight(1f).padding(start = Spacing.Component), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -235,17 +282,25 @@ fun RecordingsScreen(
     }
 }
 
-@Composable private fun RenameDialog(item: LibraryRecording, dismiss: () -> Unit, confirm: (String) -> Unit) {
+@Composable private fun RenameDialog(
+    item: LibraryRecording,
+    submitting: Boolean,
+    externalError: Int?,
+    dismiss: () -> Unit,
+    confirm: (String) -> Unit,
+) {
     var value by rememberSaveable(item.contentUri.toString()) { mutableStateOf(removeMp4Extension(item.displayName)) }
-    val trimmed = value.trim()
-    val valid = trimmed.isNotEmpty() && trimmed.length <= 120 && trimmed.none { it == '/' || it == '\\' || it.isISOControl() }
+    val validation = normalizeUserRecordingName(value)
     AlertDialog(onDismissRequest = dismiss, title = { Text(stringResource(R.string.rename_recording)) },
-        text = { OutlinedTextField(value, { value = it.take(120) }, singleLine = true, label = { Text(stringResource(R.string.filename)) }, isError = !valid) },
-        confirmButton = { TextButton({
-            val base = removeMp4Extension(trimmed)
-            confirm("${if (base.startsWith("ScreenRecording_")) base else "ScreenRecording_$base"}.mp4")
-        }, enabled = valid) { Text(stringResource(R.string.rename)) } },
-        dismissButton = { TextButton(dismiss) { Text(stringResource(R.string.cancel)) } })
+        text = { OutlinedTextField(
+            value, { value = it }, singleLine = true, label = { Text(stringResource(R.string.filename)) },
+            isError = validation.isFailure || externalError != null,
+            supportingText = if (validation.isFailure || externalError != null) {
+                { Text(stringResource(externalError ?: R.string.invalid_recording_name)) }
+            } else null,
+        ) },
+        confirmButton = { TextButton({ confirm(value) }, enabled = validation.isSuccess && !submitting) { Text(stringResource(R.string.rename)) } },
+        dismissButton = { TextButton(dismiss, enabled = !submitting) { Text(stringResource(R.string.cancel)) } })
 }
 
 private fun formatDuration(milliseconds: Long): String {
@@ -254,18 +309,53 @@ private fun formatDuration(milliseconds: Long): String {
     else "%02d:%02d".format(seconds / 60L, seconds % 60L)
 }
 
-private fun removeMp4Extension(name: String): String = if (name.endsWith(".mp4", ignoreCase = true)) name.dropLast(4) else name
+private const val MP4_EXTENSION = ".mp4"
+private const val MAX_RECORDING_NAME_LENGTH = 80
+private val REPEATED_MP4_EXTENSION = Regex("(?i)(\\.mp4)+$")
 
-private fun play(context: Context, uri: Uri, message: (String) -> Unit) {
+private fun removeMp4Extension(name: String): String = name.replace(Regex("(?i)\\.mp4$"), "")
+
+private fun normalizeUserRecordingName(rawInput: String): Result<String> {
+    val baseName = rawInput.trim().replace(REPEATED_MP4_EXTENSION, "").trim()
+    return when {
+        baseName.isBlank() -> Result.failure(IllegalArgumentException("Recording name cannot be empty"))
+        baseName.length > MAX_RECORDING_NAME_LENGTH -> Result.failure(IllegalArgumentException("Recording name is too long"))
+        baseName.any { it == '/' || it == '\\' || it.isISOControl() } -> Result.failure(IllegalArgumentException("Unsupported character"))
+        else -> Result.success("$baseName$MP4_EXTENSION")
+    }
+}
+
+private fun play(context: Context, uri: Uri, message: (String) -> Unit, onUnavailable: () -> Unit) {
+    val activity = context.findActivity() ?: return message(context.getString(R.string.no_video_player))
     val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     intent.clipData = ClipData.newUri(context.contentResolver, "recording", uri)
-    if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent) else message(context.getString(R.string.no_video_player))
+    try {
+        activity.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        message(context.getString(R.string.no_video_player))
+    } catch (_: SecurityException) {
+        onUnavailable()
+        message(context.getString(R.string.recording_unavailable_file))
+    }
 }
 
 private fun share(context: Context, uri: Uri, message: (String) -> Unit) {
+    val activity = context.findActivity() ?: return message(context.getString(R.string.unable_to_share))
     val send = Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM, uri)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     send.clipData = ClipData.newUri(context.contentResolver, "recording", uri)
     val chooser = Intent.createChooser(send, context.getString(R.string.share_recording))
-    if (chooser.resolveActivity(context.packageManager) != null) context.startActivity(chooser) else message(context.getString(R.string.unable_to_share))
+    try {
+        activity.startActivity(chooser)
+    } catch (_: ActivityNotFoundException) {
+        message(context.getString(R.string.unable_to_share))
+    } catch (_: SecurityException) {
+        message(context.getString(R.string.unable_to_share))
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

@@ -51,7 +51,9 @@
     <string name="filename">Filename</string>
     <string name="play_recording">Play recording</string>
     <string name="share_recording">Share recording</string>
-    <string name="no_video_player">No compatible video player is available.</string>
+    <string name="no_video_player">No compatible video player found.</string>
+    <string name="recording_unavailable_file">This recording is no longer available.</string>
+    <string name="invalid_recording_name">Enter a name of 80 characters or fewer without slashes or control characters.</string>
     <string name="unable_to_share">This recording could not be shared.</string>
     <string name="recording_action_failed">The recording could not be changed.</string>
     <string name="recording_actions">Actions for %1$s</string>

@@ -82,7 +82,6 @@ internal class RecordingsRepository(private val context: Context) {
         val selection = "${MediaStore.Video.Media.MIME_TYPE}=? AND ${MediaStore.Video.Media.RELATIVE_PATH}=? AND " +
             "${MediaStore.Video.Media.IS_PENDING}=0 AND ${MediaStore.Video.Media.SIZE}>0"
         return readCursor(collection, selection, arrayOf(RecordingOutput.MIME_TYPE, "${RecordingOutput.RELATIVE_PATH}/"), volume)
-            .filter { RecordingFilename.isAppRecording(it.displayName) }
     }
 
     @Suppress("DEPRECATION")
@@ -92,14 +91,14 @@ internal class RecordingsRepository(private val context: Context) {
         val collection = MediaStore.Video.Media.EXTERNAL_CONTENT_URI
         val rows = readCursor(
             collection,
-            "${MediaStore.Video.Media.MIME_TYPE}=? AND ${MediaStore.Video.Media.DATA} LIKE ? AND ${MediaStore.Video.Media.SIZE}>0",
-            arrayOf(RecordingOutput.MIME_TYPE, "${directory.absolutePath}/%"),
+            "${MediaStore.Video.Media.MIME_TYPE}=? AND ${MediaStore.Video.Media.DATA} LIKE ? AND " +
+                "${MediaStore.Video.Media.DATA} NOT LIKE ? AND ${MediaStore.Video.Media.SIZE}>0",
+            arrayOf(RecordingOutput.MIME_TYPE, "${directory.absolutePath}/%", "${directory.absolutePath}/%/%"),
             null,
         )
         return rows.filter {
             val name = it.displayName
-            (RecordingFilename.isAppRecording(name) || LEGACY_NAME.matches(name)) &&
-                !name.endsWith(".partial", ignoreCase = true)
+            name.endsWith(".mp4", ignoreCase = true) && !name.endsWith(".partial", ignoreCase = true)
         }.map { it.copy(origin = if (LEGACY_NAME.matches(it.displayName)) RecordingOrigin.Legacy else RecordingOrigin.Current) }
     }
 
