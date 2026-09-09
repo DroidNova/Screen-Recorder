@@ -28,7 +28,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
@@ -126,7 +125,7 @@ fun ScreenRecorderApp(
                         modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
                     ) {
                         composable(TopLevelDestination.Home.route) {
-                            HomeScreen(
+                            com.droidnova.screenrecorder.feature.home.HomeScreen(
                                 recordingState = recordingState,
                                 elapsedSeconds = elapsedSeconds,
                                 countdownRemainingSeconds = countdownRemainingSeconds,
