@@ -1,40 +1,45 @@
 package com.droidnova.screenrecorder.feature.home
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.key
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.droidnova.screenrecorder.R
-import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
-import com.droidnova.screenrecorder.ui.theme.Spacing
-import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.domain.recording.RecordingPreset
+import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
+import com.droidnova.screenrecorder.ui.theme.Spacing
+import java.text.NumberFormat
 
+private enum class HomeSheet { Quality, Resolution, FrameRate }
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     recordingState: RecordingState = RecordingState.Idle,
@@ -42,10 +47,8 @@ fun HomeScreen(
     countdownRemainingSeconds: Int? = null,
     availableStorageBytes: Long? = null,
     statusMessage: String? = null,
-    onStartRecording: () -> Unit = {},
-    onStopRecording: () -> Unit = {},
-    onPauseRecording: () -> Unit = {},
-    onResumeRecording: () -> Unit = {},
+    onStartRecording: () -> Unit = {}, onStopRecording: () -> Unit = {},
+    onPauseRecording: () -> Unit = {}, onResumeRecording: () -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
     selectedVideo: AvailableVideoConfiguration? = null,
     settingsValid: Boolean = false,
@@ -53,231 +56,198 @@ fun HomeScreen(
     audioMode: AudioMode = AudioMode.None,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page),
-        verticalArrangement = Arrangement.spacedBy(Spacing.Section),
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Spacing.Small)) {
-            Text(stringResource(R.string.home_heading), style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
-            Text(stringResource(R.string.home_supporting), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(Spacing.Card), verticalArrangement = Arrangement.spacedBy(Spacing.Component)) {
-                Text(stringResource(R.string.capture_summary), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-                val editable = recordingState == RecordingState.Idle
-                val presetOptions = listOf(
-                    resolveNamedPreset(videoOptions, RecordingPreset.DataSaver),
-                    resolveNamedPreset(videoOptions, RecordingPreset.Balanced),
-                    resolveNamedPreset(videoOptions, RecordingPreset.HighQuality),
-                    selectedVideo?.copy(preset = RecordingPreset.Custom),
-                ).filterNotNull().distinctBy { it.preset }
-                SelectableSummaryRow(
-                    R.string.quality,
-                    selectedVideo?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—",
-                    presetOptions.distinct(),
-                    editable,
-                    onSelected = onVideoSelected,
-                    optionKey = { it.preset },
-                ) { option ->
-                    if (option.preset == RecordingPreset.Custom) stringResource(R.string.preset_custom) else {
-                        "${stringResource(option.preset.labelResource())} · ${stringResource(R.string.bitrate_value, option.bitrate.bitsPerSecond / 1_000_000)}"
-                    }
+    var openSheet by rememberSaveable { mutableStateOf<HomeSheet?>(null) }
+    val editable = recordingState == RecordingState.Idle
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val landscape = maxWidth >= 600.dp && maxHeight < 600.dp
+        val largeText = LocalDensity.current.fontScale > 1.3f
+        val contentModifier = Modifier.fillMaxSize().widthIn(max = 840.dp).align(Alignment.TopCenter)
+            .verticalScroll(rememberScrollState()).padding(horizontal = Spacing.Page, vertical = Spacing.Standard)
+        if (landscape) {
+            Row(contentModifier, horizontalArrangement = Arrangement.spacedBy(Spacing.Large)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
+                    Header(); Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText, { openSheet = it })
                 }
-                val custom = selectedVideo?.preset == RecordingPreset.Custom
-                val resolutionValue = selectedVideo?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—"
-                val fpsValue = selectedVideo?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—"
-                if (custom) {
-                    SelectableSummaryRow(
-                        R.string.resolution,
-                        resolutionValue,
-                        videoOptions.distinctBy { it.shortEdge to it.resolution }.sortedBy { it.shortEdge },
-                        editable,
-                        { option ->
-                            val current = selectedVideo
-                            onVideoSelected(
-                                if (current == null) option.copy(preset = RecordingPreset.Custom) else option.copy(
-                                    preset = RecordingPreset.Custom,
-                                    frameRate = current.frameRate,
-                                    bitrate = current.bitrate,
-                                ),
-                            )
-                        },
-                    ) { stringResource(R.string.resolution_label, it.shortEdge) }
-                    SelectableSummaryRow(
-                        R.string.frame_rate,
-                        fpsValue,
-                        videoOptions.filter { it.shortEdge == selectedVideo.shortEdge }
-                            .distinctBy { it.frameRate.framesPerSecond }.sortedBy { it.frameRate.framesPerSecond },
-                        editable,
-                        { option ->
-                            onVideoSelected(option.copy(preset = RecordingPreset.Custom, bitrate = selectedVideo.bitrate))
-                        },
-                    ) { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) }
-                    SelectableSummaryRow(
-                        R.string.video_bitrate,
-                        stringResource(R.string.bitrate_value, selectedVideo.bitrate.bitsPerSecond / 1_000_000),
-                        videoOptions.filter {
-                            it.shortEdge == selectedVideo.shortEdge && it.frameRate == selectedVideo.frameRate
-                        }.distinctBy { it.bitrate.bitsPerSecond }.sortedBy { it.bitrate.bitsPerSecond },
-                        editable,
-                        { onVideoSelected(it.copy(preset = RecordingPreset.Custom)) },
-                    ) { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) }
-                } else {
-                    SummaryRow(R.string.resolution, resolutionValue)
-                    SummaryRow(R.string.frame_rate, fpsValue)
-                }
-                SummaryRow(
-                    R.string.storage,
-                    availableStorageBytes?.let { stringResource(R.string.available_storage, it.toDouble() / (1024.0 * 1024.0 * 1024.0)) }
-                        ?: stringResource(R.string.app_storage),
-                )
-                selectedVideo?.let {
-                    val audioBitrate = if (audioMode == AudioMode.None) 0L else 128_000L
-                    val megabytesPerMinute = ((it.bitrate.bitsPerSecond.toLong() + audioBitrate) * 60L * 105L) /
-                        (8L * 100L * 1_000_000L)
-                    Text(
-                        stringResource(R.string.estimated_size, megabytesPerMinute),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
+                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage, Modifier.weight(1f))
+            }
+        } else {
+            Column(contentModifier, verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
+                Header()
+                Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText || maxWidth < 350.dp, { openSheet = it })
+                Spacer(Modifier.height((maxHeight - 560.dp).coerceIn(32.dp, 180.dp)))
+                TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
+                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage)
             }
         }
-        if (recordingState is RecordingState.Recording || recordingState is RecordingState.Paused) {
-            Text(
-                if (elapsedSeconds >= 3600L) stringResource(R.string.elapsed_time_long_format, elapsedSeconds / 3600L, elapsedSeconds / 60L % 60L, elapsedSeconds % 60L)
-                else stringResource(R.string.elapsed_time_format, elapsedSeconds / 60L, elapsedSeconds % 60L),
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-            if (recordingState is RecordingState.Paused) {
-                Text(
-                    stringResource(R.string.recording_paused),
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-            }
-        }
-        if (recordingState is RecordingState.Countdown) {
-            Text(
-                stringResource(R.string.recording_countdown_notification, countdownRemainingSeconds ?: 0),
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            )
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Small), modifier = Modifier.fillMaxWidth()) {
-            val control = recordingState.availableRecordingControl()
-            val idle = control == RecordingControl.Start
-            val recording = control == RecordingControl.Stop || recordingState is RecordingState.Paused
-            Button(
-                onClick = if (recording) onStopRecording else onStartRecording,
-                enabled = recording || idle && settingsValid,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(painterResource(R.drawable.ic_record), contentDescription = null)
-                Text(
-                    stringResource(if (recording) R.string.stop_recording else if (idle) R.string.start_recording else R.string.recording_preparing),
-                    modifier = Modifier.padding(start = Spacing.Small),
-                )
-            }
-            if (recordingState is RecordingState.Recording || recordingState is RecordingState.Paused) {
-                Button(
-                    onClick = if (recordingState is RecordingState.Paused) onResumeRecording else onPauseRecording,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        stringResource(
-                            if (recordingState is RecordingState.Paused) {
-                                R.string.resume_recording
-                            } else {
-                                R.string.pause_recording
-                            },
-                        ),
-                    )
-                }
-            }
-            statusMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+    openSheet?.let { sheet ->
+        ConfigurationSheet(sheet, videoOptions, selectedVideo, onDismiss = { openSheet = null }) {
+            onVideoSelected(it); openSheet = null
         }
     }
 }
 
-@Composable private fun SummaryRow(label: Int, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(stringResource(label), style = MaterialTheme.typography.bodyLarge)
-        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-    }
-}
+@Composable private fun Header() = Text(
+    stringResource(R.string.home_title), style = MaterialTheme.typography.headlineMedium,
+    modifier = Modifier.semantics { heading() },
+)
 
 @Composable
-private fun SelectableSummaryRow(
-    label: Int,
-    value: String,
-    options: List<AvailableVideoConfiguration>,
-    enabled: Boolean,
-    onSelected: (AvailableVideoConfiguration) -> Unit,
-    optionKey: (AvailableVideoConfiguration) -> Any = {
-        "${it.resolution}:${it.frameRate}:${it.bitrate}"
-    },
-    optionLabel: @Composable (AvailableVideoConfiguration) -> String,
+private fun Metrics(
+    options: List<AvailableVideoConfiguration>, selected: AvailableVideoConfiguration?, storage: Long?,
+    editable: Boolean, grid: Boolean, open: (HomeSheet) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    Column {
-        androidx.compose.material3.TextButton(
-            onClick = { expanded = true },
-            enabled = enabled && options.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(stringResource(label), style = MaterialTheme.typography.bodyLarge)
-                Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-            }
+    val storageValue = storage?.let { stringResource(R.string.storage_value, formatStorageNumber(it)) } ?: "—"
+    val metrics: @Composable RowScope.() -> Unit = {
+        StorageMetric(storageValue, storage != null, Modifier.weight(1f))
+        MetricIndicator(selected?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—", stringResource(R.string.quality), editable,
+            { open(HomeSheet.Quality) }, Modifier.weight(1f))
+        MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable,
+            { open(HomeSheet.Resolution) }, Modifier.weight(1f))
+        MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable,
+            { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
+    }
+    if (!grid) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Small), content = metrics)
+    else Column(verticalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
+            StorageMetric(storageValue, storage != null, Modifier.weight(1f))
+            MetricIndicator(selected?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—", stringResource(R.string.quality), editable, { open(HomeSheet.Quality) }, Modifier.weight(1f))
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option ->
-                key(optionKey(option)) {
-                    DropdownMenuItem(
-                        text = { Text(optionLabel(option)) },
-                        onClick = { expanded = false; onSelected(option) },
-                    )
-                }
-            }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
+            MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable, { open(HomeSheet.Resolution) }, Modifier.weight(1f))
+            MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable, { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
         }
     }
 }
 
-private fun resolveNamedPreset(
-    options: List<AvailableVideoConfiguration>,
-    preset: RecordingPreset,
-): AvailableVideoConfiguration? {
+@Composable private fun RowScope.StorageMetric(value: String, known: Boolean, modifier: Modifier) {
+    val description = stringResource(R.string.storage_accessibility, value)
+    Column(modifier.semantics { contentDescription = description }, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.sizeIn(minWidth = 64.dp, minHeight = 64.dp, maxWidth = 84.dp, maxHeight = 84.dp).aspectRatio(1f), contentAlignment = Alignment.Center) {
+            val track = MaterialTheme.colorScheme.outlineVariant
+            val primary = MaterialTheme.colorScheme.primary
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 5.dp.toPx(); val inset = stroke / 2
+                drawArc(track, 120f, 300f, false, Offset(inset, inset), Size(size.width - stroke, size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
+                drawArc(primary, 120f, if (known) 240f else 0f, false, Offset(inset, inset), Size(size.width - stroke, size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
+            }
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1)
+                Text(stringResource(R.string.free), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(Spacing.Small)); Text(stringResource(R.string.storage), style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable private fun RowScope.MetricIndicator(value: String, label: String, enabled: Boolean, click: () -> Unit, modifier: Modifier) {
+    val description = stringResource(R.string.metric_accessibility, label, value)
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.sizeIn(minWidth = 64.dp, minHeight = 64.dp, maxWidth = 84.dp, maxHeight = 84.dp).aspectRatio(1f)
+            .clip(CircleShape).border(2.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = click)
+            .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
+            Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
+        }
+        Spacer(Modifier.height(Spacing.Small)); Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+    }
+}
+
+@Composable private fun TimerAndControls(
+    state: RecordingState, elapsed: Long, countdown: Int?, valid: Boolean,
+    start: () -> Unit, stop: () -> Unit, pause: () -> Unit, resume: () -> Unit,
+    message: String?, modifier: Modifier = Modifier,
+) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
+        val shown = if (state is RecordingState.Countdown) countdown?.toLong() ?: 0 else elapsed
+        Box(Modifier.width(224.dp).height(88.dp).border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) {
+            Text(formatElapsed(shown), fontSize = 48.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        }
+        if (state is RecordingState.Paused) Text(stringResource(R.string.recording_paused), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+        when (state) {
+            RecordingState.Idle, is RecordingState.Completed, is RecordingState.Failed -> Button(start, enabled = valid,
+                modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 64.dp), shape = RoundedCornerShape(22.dp)) { Text(stringResource(R.string.start)) }
+            is RecordingState.Countdown -> Button(stop, modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 60.dp)) { Text(stringResource(R.string.cancel)) }
+            is RecordingState.Preparing -> ProgressAction(R.string.starting)
+            is RecordingState.Recording -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
+                OutlinedButton(pause, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.pause_recording)) }
+                Button(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+            }
+            is RecordingState.Paused -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
+                Button(resume, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.resume_recording)) }
+                OutlinedButton(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+            }
+            is RecordingState.Stopping -> ProgressAction(R.string.saving)
+        }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center) }
+    }
+}
+
+@Composable private fun ProgressAction(label: Int) = Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
+    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Text(stringResource(label))
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun ConfigurationSheet(
+    sheet: HomeSheet, options: List<AvailableVideoConfiguration>, selected: AvailableVideoConfiguration?,
+    onDismiss: () -> Unit, choose: (AvailableVideoConfiguration) -> Unit,
+) {
+    val choices = when (sheet) {
+        HomeSheet.Quality -> listOfNotNull(
+            resolveNamedPreset(options, RecordingPreset.DataSaver), resolveNamedPreset(options, RecordingPreset.Balanced),
+            resolveNamedPreset(options, RecordingPreset.HighQuality), selected?.copy(preset = RecordingPreset.Custom),
+        ).distinctBy { it.preset }
+        HomeSheet.Resolution -> options.distinctBy { it.shortEdge }.sortedBy { it.shortEdge }
+        HomeSheet.FrameRate -> options.filter { selected == null || it.shortEdge == selected.shortEdge }.distinctBy { it.frameRate.framesPerSecond }.sortedBy { it.frameRate.framesPerSecond }
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = Spacing.Section, vertical = Spacing.Small)) {
+            Text(stringResource(when (sheet) { HomeSheet.Quality -> R.string.recording_quality; HomeSheet.Resolution -> R.string.resolution; HomeSheet.FrameRate -> R.string.frame_rate }),
+                style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = Spacing.Standard).semantics { heading() })
+            choices.forEach { option ->
+                val isSelected = when (sheet) { HomeSheet.Quality -> selected?.preset == option.preset; HomeSheet.Resolution -> selected?.shortEdge == option.shortEdge; HomeSheet.FrameRate -> selected?.frameRate == option.frameRate }
+                Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clip(MaterialTheme.shapes.medium)
+                    .selectable(isSelected, role = Role.RadioButton) {
+                        choose(when (sheet) {
+                            HomeSheet.Quality -> option
+                            HomeSheet.Resolution -> option.copy(preset = RecordingPreset.Custom)
+                            HomeSheet.FrameRate -> option.copy(preset = RecordingPreset.Custom, bitrate = selected?.bitrate ?: option.bitrate)
+                        })
+                    }.padding(horizontal = Spacing.Component), verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(isSelected, null)
+                    Column(Modifier.padding(start = Spacing.Small)) {
+                        Text(when (sheet) {
+                            HomeSheet.Quality -> stringResource(option.preset.labelResource())
+                            HomeSheet.Resolution -> stringResource(R.string.resolution_label, option.shortEdge)
+                            HomeSheet.FrameRate -> stringResource(R.string.fps_value_uppercase, option.frameRate.framesPerSecond)
+                        })
+                        if (sheet == HomeSheet.Quality) Text(stringResource(R.string.capture_summary_value, option.shortEdge, option.frameRate.framesPerSecond, option.bitrate.bitsPerSecond / 1_000_000), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Spacer(Modifier.height(Spacing.Standard))
+        }
+    }
+}
+
+private fun formatElapsed(seconds: Long) = if (seconds >= 3600) "%02d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60) else "%02d:%02d".format(seconds / 60, seconds % 60)
+private fun formatStorageNumber(bytes: Long): String {
+    val gb = bytes / (1024.0 * 1024.0 * 1024.0)
+    val formatter = NumberFormat.getNumberInstance().apply { maximumFractionDigits = if (gb < 10) 1 else 0 }
+    return formatter.format(gb)
+}
+
+private fun resolveNamedPreset(options: List<AvailableVideoConfiguration>, preset: RecordingPreset): AvailableVideoConfiguration? {
     val matching = options.filter { it.preset == preset }
     return when (preset) {
-        RecordingPreset.DataSaver -> matching.minWithOrNull(
-            compareBy<AvailableVideoConfiguration> { kotlin.math.abs(it.shortEdge - 480) }
-                .thenBy { kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
-                .thenBy { kotlin.math.abs(it.bitrate.bitsPerSecond - 2_000_000) },
-        )
-        RecordingPreset.Balanced -> matching.minWithOrNull(
-            compareBy<AvailableVideoConfiguration> { kotlin.math.abs(it.shortEdge - 720) }
-                .thenBy { kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
-                .thenBy { kotlin.math.abs(it.bitrate.bitsPerSecond - 6_000_000) },
-        )
-        RecordingPreset.HighQuality -> (matching.ifEmpty { options.filter { it.shortEdge < 1080 } }).maxWithOrNull(
-            compareBy<AvailableVideoConfiguration> { it.shortEdge }
-                .thenBy { it.frameRate.framesPerSecond }
-                .thenBy { it.bitrate.bitsPerSecond },
-        )?.copy(preset = RecordingPreset.HighQuality)
+        RecordingPreset.DataSaver -> matching.minByOrNull { kotlin.math.abs(it.shortEdge - 480) + kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
+        RecordingPreset.Balanced -> matching.minByOrNull { kotlin.math.abs(it.shortEdge - 720) + kotlin.math.abs(it.frameRate.framesPerSecond - 30) }
+        RecordingPreset.HighQuality -> matching.maxWithOrNull(compareBy<AvailableVideoConfiguration> { it.shortEdge }.thenBy { it.frameRate.framesPerSecond })
         RecordingPreset.Custom -> null
     }
 }
-
-private fun RecordingPreset.labelResource(): Int = when (this) {
-    RecordingPreset.DataSaver -> R.string.preset_data_saver
-    RecordingPreset.Balanced -> R.string.balanced
-    RecordingPreset.HighQuality -> R.string.preset_high_quality
-    RecordingPreset.Custom -> R.string.preset_custom
+private fun RecordingPreset.labelResource() = when (this) {
+    RecordingPreset.DataSaver -> R.string.preset_data_saver; RecordingPreset.Balanced -> R.string.balanced
+    RecordingPreset.HighQuality -> R.string.preset_high_quality; RecordingPreset.Custom -> R.string.preset_custom
 }
-
-@Preview(name = "Home light", showBackground = true)
-@Preview(name = "Home dark", showBackground = true, uiMode = 0x20)
-@Preview(name = "Home large text", showBackground = true, fontScale = 2f)
-@Composable private fun HomePreview() { ScreenRecorderTheme { HomeScreen() } }

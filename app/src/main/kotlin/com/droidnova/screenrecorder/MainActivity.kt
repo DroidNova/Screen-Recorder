@@ -301,6 +301,8 @@ class MainActivity : ComponentActivity() {
                     PermissionSheet(
                         step = step,
                         audioMode = requestedSessionAudioMode,
+                        video = pendingVideo,
+                        countdownSeconds = pendingCountdown,
                         notificationGranted = hasPermission(Manifest.permission.POST_NOTIFICATIONS),
                         audioGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
                         onContinue = {
@@ -520,6 +522,8 @@ class MainActivity : ComponentActivity() {
     private fun PermissionSheet(
         step: StartStep,
         audioMode: AudioMode,
+        video: AvailableVideoConfiguration?,
+        countdownSeconds: Int,
         notificationGranted: Boolean,
         audioGranted: Boolean,
         onContinue: () -> Unit,
@@ -533,6 +537,11 @@ class MainActivity : ComponentActivity() {
         ) {
             Text(stringResource(R.string.permission_sheet_title), style = androidx.compose.material3.MaterialTheme.typography.headlineSmall)
             Text(stringResource(R.string.permission_sheet_supporting))
+            video?.let {
+                Text(stringResource(R.string.capture), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.capture_summary_value, it.shortEdge, it.frameRate.framesPerSecond, it.bitrate.bitsPerSecond / 1_000_000))
+                Text(stringResource(R.string.countdown_summary, if (countdownSeconds == 0) stringResource(R.string.countdown_off) else stringResource(R.string.countdown_seconds, countdownSeconds)), color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             Text(stringResource(R.string.screen_capture_permission), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.screen_capture_permission_detail))
             Text(stringResource(R.string.permission_required_every_recording), color = androidx.compose.material3.MaterialTheme.colorScheme.primary)

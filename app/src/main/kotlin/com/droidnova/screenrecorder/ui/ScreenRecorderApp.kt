@@ -3,11 +3,8 @@ package com.droidnova.screenrecorder.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -39,7 +36,6 @@ import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
 import com.droidnova.screenrecorder.recording.RecordingOutcomeType
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderApp(
     recordingState: RecordingState = RecordingState.Idle,
@@ -118,8 +114,6 @@ fun ScreenRecorderApp(
             },
         ) {
             androidx.compose.material3.Scaffold(
-                modifier = Modifier.safeDrawingPadding(),
-                topBar = { TopAppBar(title = { Text(stringResource(current.label)) }) },
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 containerColor = MaterialTheme.colorScheme.background,
             ) { padding ->

@@ -28,6 +28,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -58,6 +63,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -182,20 +188,25 @@ fun RecordingsScreen(
     }
     LaunchedEffect(Unit) { refresh() }
 
-    when (val state = result) {
-        null -> Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-        LibraryResult.Error -> StateMessage(R.string.recordings_error, R.string.retry, { refresh() }, modifier)
+    Column(modifier.fillMaxSize().widthIn(max = 720.dp).padding(top = Spacing.Standard)) {
+        Text(stringResource(R.string.nav_recordings), style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.padding(horizontal = Spacing.Page, vertical = Spacing.Small).semantics { heading() })
+        when (val state = result) {
+        null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        LibraryResult.Error -> StateMessage(R.string.recordings_error, R.string.retry, { refresh() }, Modifier)
         LibraryResult.PermissionLimited -> StateMessage(R.string.legacy_permission_explanation, R.string.allow_access, {
             if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) legacyPermission.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }, modifier)
-        is LibraryResult.Success -> if (state.recordings.isEmpty()) EmptyRecordings(modifier) else LazyColumn(
-            modifier = modifier.fillMaxSize().padding(horizontal = Spacing.Page),
+        }, Modifier)
+        is LibraryResult.Success -> if (state.recordings.isEmpty()) EmptyRecordings(Modifier) else LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = Spacing.Page),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = Spacing.Standard, bottom = Spacing.Large),
             verticalArrangement = Arrangement.spacedBy(Spacing.Component),
         ) {
             items(state.recordings, key = { it.contentUri.toString() }) { item ->
                 RecordingCard(item, { play(context, item.contentUri, showMessage) { refresh() } }, { share(context, item.contentUri, showMessage) },
                     { renameItem = item }, { deleteItem = item })
             }
+        }
         }
     }
 
@@ -213,8 +224,8 @@ fun RecordingsScreen(
     ) }
     deleteItem?.let { item -> AlertDialog(
         onDismissRequest = { deleteItem = null }, title = { Text(stringResource(R.string.delete_recording)) },
-        text = { Text(stringResource(R.string.delete_recording_confirmation, item.displayName)) },
-        confirmButton = { TextButton(onClick = { deleteItem = null; modify(ConsentOperation.Delete, item) }) { Text(stringResource(R.string.delete)) } },
+        text = { Column { Text(stringResource(R.string.delete_recording_confirmation, item.displayName)); Text(stringResource(R.string.recording_removed_detail), color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+        confirmButton = { TextButton(onClick = { deleteItem = null; modify(ConsentOperation.Delete, item) }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) } },
         dismissButton = { TextButton(onClick = { deleteItem = null }) { Text(stringResource(R.string.cancel)) } },
     ) }
 }
@@ -235,7 +246,10 @@ fun RecordingsScreen(
     var menu by remember { mutableStateOf(false) }
     var launching by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    androidx.compose.material3.Card(modifier = Modifier.fillMaxWidth().clickable(onClickLabel = stringResource(R.string.play_recording)) {
+    androidx.compose.material3.Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        modifier = Modifier.fillMaxWidth().heightIn(min = 92.dp).clickable(onClickLabel = stringResource(R.string.play_recording)) {
         if (!launching) {
             launching = true
             play()
@@ -243,12 +257,14 @@ fun RecordingsScreen(
         }
     }) {
         Row(Modifier.padding(Spacing.Small), verticalAlignment = Alignment.CenterVertically) {
-            Thumbnail(item, Modifier.fillMaxWidth(0.42f).aspectRatio(16f / 9f))
+            Thumbnail(item, Modifier.width(124.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)))
             Column(Modifier.weight(1f).padding(start = Spacing.Component), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
                 Text(DateFormat.getMediumDateFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)) + " · " +
-                    DateFormat.getTimeFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)), style = MaterialTheme.typography.bodySmall)
-                Text(Formatter.formatFileSize(LocalContext.current, item.sizeBytes), style = MaterialTheme.typography.bodySmall)
+                    DateFormat.getTimeFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(Formatter.formatFileSize(LocalContext.current, item.sizeBytes), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Box {
                 val actionsDescription = stringResource(R.string.recording_actions, item.displayName)
@@ -256,9 +272,10 @@ fun RecordingsScreen(
                     Text("⋮", style = MaterialTheme.typography.headlineSmall)
                 }
                 DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem({ Text(stringResource(R.string.play)) }, { menu = false; play() })
                     DropdownMenuItem({ Text(stringResource(R.string.rename)) }, { menu = false; rename() })
                     DropdownMenuItem({ Text(stringResource(R.string.share)) }, { menu = false; share() })
-                    DropdownMenuItem({ Text(stringResource(R.string.delete)) }, { menu = false; delete() })
+                    DropdownMenuItem({ Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }, { menu = false; delete() })
                 }
             }
         }
@@ -278,7 +295,7 @@ fun RecordingsScreen(
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
         bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
             ?: Icon(painterResource(R.drawable.ic_recordings_outline), null)
-        Text(formatDuration(item.durationMillis), Modifier.align(Alignment.BottomEnd).background(MaterialTheme.colorScheme.scrim.copy(alpha = .75f)).padding(4.dp), color = MaterialTheme.colorScheme.onPrimary)
+        Text(formatDuration(item.durationMillis), Modifier.align(Alignment.BottomEnd).background(MaterialTheme.colorScheme.scrim.copy(alpha = .75f)).padding(4.dp), color = MaterialTheme.colorScheme.onBackground)
     }
 }
 

@@ -48,21 +48,25 @@ import androidx.compose.ui.platform.LocalContext
 ) {
     var showReset by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    Column(modifier.verticalScroll(rememberScrollState()).padding(Spacing.Page), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
-        Text(stringResource(R.string.settings_supporting), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(Spacing.Page), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
+        Text(stringResource(R.string.nav_settings), style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.semantics { heading() })
         CaptureSection(
             audioMode, audioModeEnabled, deviceAudioAvailable, onAudioModeSelected,
             countdownSeconds, onCountdownSelected,
         )
         Column(verticalArrangement = Arrangement.spacedBy(Spacing.Small)) {
-            Text(stringResource(R.string.quality), style = MaterialTheme.typography.titleLarge)
+            Text(stringResource(R.string.recording_defaults), style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
+            Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(Spacing.Standard)) {
+            Text(stringResource(R.string.quality), style = MaterialTheme.typography.titleMedium)
             RecordingPreset.entries.forEach { preset ->
                 val option = videoOptions.firstOrNull { it.preset == preset }
                 if (option != null) Row(Modifier.fillMaxWidth().selectable(selectedVideo?.preset == preset, enabled = audioModeEnabled, role = Role.RadioButton) { onVideoSelected(option) }.padding(Spacing.Small)) {
                     RadioButton(selectedVideo?.preset == preset, null, enabled = audioModeEnabled)
-                    Text(preset.name, Modifier.padding(start = Spacing.Small))
+                    Text(stringResource(preset.labelResource()), Modifier.padding(start = Spacing.Small))
                 }
             }
+            } }
         }
         Section(R.string.permissions, listOf(
             R.string.notifications to if (androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED || android.os.Build.VERSION.SDK_INT < 33) R.string.permission_allowed else R.string.not_allowed,
@@ -70,7 +74,7 @@ import androidx.compose.ui.platform.LocalContext
             R.string.screen_capture_permission to R.string.screen_capture_settings_detail,
         ))
         Section(R.string.app_name, listOf(R.string.recording_location to R.string.recording_location_value))
-        TextButton(onClick = { showReset = true }) { Text(stringResource(R.string.reset_recording_settings)) }
+        Card(Modifier.fillMaxWidth()) { TextButton(onClick = { showReset = true }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.reset_recording_settings)) } }
         val versionName = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "—"
         Text("${stringResource(R.string.app_name)} · ${stringResource(R.string.version)} $versionName")
         if (!audioModeEnabled) Text(stringResource(R.string.applies_next_recording), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -149,6 +153,13 @@ private fun AudioMode.labelResource(): Int = when (this) {
     AudioMode.None -> R.string.audio_none
     AudioMode.Microphone -> R.string.audio_microphone
     AudioMode.DeviceAudio -> R.string.audio_device
+}
+
+private fun RecordingPreset.labelResource(): Int = when (this) {
+    RecordingPreset.DataSaver -> R.string.preset_data_saver
+    RecordingPreset.Balanced -> R.string.balanced
+    RecordingPreset.HighQuality -> R.string.preset_high_quality
+    RecordingPreset.Custom -> R.string.preset_custom
 }
 
 @Composable private fun Section(title: Int, rows: List<Pair<Int, Int>>) {
