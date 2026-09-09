@@ -62,6 +62,7 @@ fun ScreenRecorderApp(
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     countdownSeconds: Int = 0,
     onCountdownSelected: (Int) -> Unit = {},
+    onResetSettings: () -> Unit = {},
 ) {
     ScreenRecorderTheme {
         val navController = rememberNavController()
@@ -70,6 +71,7 @@ fun ScreenRecorderApp(
         val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
         val snackbarHostState = remember { SnackbarHostState() }
         val snackbarScope = rememberCoroutineScope()
+        val settingsResetMessage = stringResource(com.droidnova.screenrecorder.R.string.recording_settings_reset)
         val outcomeMessage = pendingOutcome?.let {
             stringResource(
                 when (it.type) {
@@ -158,6 +160,13 @@ fun ScreenRecorderApp(
                                 onAudioModeSelected = onAudioModeSelected,
                                 countdownSeconds = countdownSeconds,
                                 onCountdownSelected = onCountdownSelected,
+                                videoOptions = videoOptions,
+                                selectedVideo = selectedVideo,
+                                onVideoSelected = onVideoSelected,
+                                onReset = {
+                                    onResetSettings()
+                                    snackbarScope.launch { snackbarHostState.showSnackbar(settingsResetMessage) }
+                                },
                             )
                         }
                     }
