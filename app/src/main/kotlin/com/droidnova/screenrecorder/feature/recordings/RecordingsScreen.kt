@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -259,13 +258,14 @@ private fun removeMp4Extension(name: String): String = if (name.endsWith(".mp4",
 
 private fun play(context: Context, uri: Uri, message: (String) -> Unit) {
     val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/mp4").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        .setClipData(ClipData.newUri(context.contentResolver, "recording", uri))
+    intent.clipData = ClipData.newUri(context.contentResolver, "recording", uri)
     if (intent.resolveActivity(context.packageManager) != null) context.startActivity(intent) else message(context.getString(R.string.no_video_player))
 }
 
 private fun share(context: Context, uri: Uri, message: (String) -> Unit) {
     val send = Intent(Intent.ACTION_SEND).setType("video/mp4").putExtra(Intent.EXTRA_STREAM, uri)
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION).setClipData(ClipData.newUri(context.contentResolver, "recording", uri))
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    send.clipData = ClipData.newUri(context.contentResolver, "recording", uri)
     val chooser = Intent.createChooser(send, context.getString(R.string.share_recording))
     if (chooser.resolveActivity(context.packageManager) != null) context.startActivity(chooser) else message(context.getString(R.string.unable_to_share))
 }
