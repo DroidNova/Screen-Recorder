@@ -18,6 +18,9 @@ import android.util.LruCache
 import android.util.Size
 import com.droidnova.screenrecorder.recording.RecordingFilename
 import com.droidnova.screenrecorder.recording.RecordingOutput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
 
 internal enum class RecordingOrigin { Current, Legacy }
 
@@ -50,7 +53,7 @@ internal sealed interface ModificationResult {
 internal class RecordingsRepository(private val context: Context) {
     private val resolver = context.contentResolver
 
-    fun query(legacyPermissionGranted: Boolean): LibraryResult = try {
+    suspend fun query(legacyPermissionGranted: Boolean): LibraryResult = withContext(Dispatchers.IO) { try {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && !legacyPermissionGranted) {
             LibraryResult.PermissionLimited
         } else {
@@ -60,9 +63,11 @@ internal class RecordingsRepository(private val context: Context) {
                 compareByDescending<LibraryRecording> { it.modifiedSeconds }.thenByDescending { it.id },
             ))
         }
+    } catch (cancellation: CancellationException) {
+        throw cancellation
     } catch (_: Exception) {
         LibraryResult.Error
-    }
+    } }
 
     private fun scanLegacyDirectoryOnce() {
         val preferences = context.getSharedPreferences("recordings_library", Context.MODE_PRIVATE)
@@ -138,7 +143,7 @@ internal class RecordingsRepository(private val context: Context) {
         } ?: emptyList()
     }
 
-    fun rename(uri: Uri, displayName: String): ModificationResult = try {
+    suspend fun rename(uri: Uri, displayName: String): ModificationResult = withContext(Dispatchers.IO) { try {
         if (resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, displayName) }, null, null) > 0) {
             ModificationResult.Success
         } else ModificationResult.Missing
@@ -148,11 +153,13 @@ internal class RecordingsRepository(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             ModificationResult.ConsentRequired(MediaStore.createWriteRequest(resolver, listOf(uri)).intentSender)
         } else ModificationResult.Failed
+    } catch (cancellation: CancellationException) {
+        throw cancellation
     } catch (_: Exception) {
         ModificationResult.Failed
-    }
+    } }
 
-    fun delete(uri: Uri): ModificationResult = try {
+    suspend fun delete(uri: Uri): ModificationResult = withContext(Dispatchers.IO) { try {
         if (resolver.delete(uri, null, null) > 0) ModificationResult.Success else ModificationResult.Missing
     } catch (error: RecoverableSecurityException) {
         ModificationResult.ConsentRequired(error.userAction.actionIntent.intentSender)
@@ -160,9 +167,11 @@ internal class RecordingsRepository(private val context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             ModificationResult.ConsentRequired(MediaStore.createDeleteRequest(resolver, listOf(uri)).intentSender)
         } else ModificationResult.Failed
+    } catch (cancellation: CancellationException) {
+        throw cancellation
     } catch (_: Exception) {
         ModificationResult.Failed
-    }
+    } }
 
     fun observe(onChanged: () -> Unit): ContentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) = onChanged()
@@ -177,8 +186,9 @@ internal class RecordingsRepository(private val context: Context) {
 }
 
 internal object RecordingThumbnailCache {
-    private const val MAX_BYTES = 8 * 1024 * 1024
-    private val cache = object : LruCache<String, Bitmap>(MAX_BYTES) {
+    private val cacheBytes = (Runtime.getRuntime().maxMemory() / 32L)
+        .coerceIn(4L * 1024L * 1024L, 16L * 1024L * 1024L).toInt()
+    private val cache = object : LruCache<String, Bitmap>(cacheBytes) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
 
