@@ -467,6 +467,10 @@ class ScreenRecordingService : Service() {
     private fun applyTransitionLocked(input: RecordingInput): TransitionResult {
         return RecordingStateMachine.transition(_runtime.value.state, input).also { result ->
             if (result is TransitionResult.Accepted) {
+                if (result.newState == RecordingState.Idle) {
+                    resetElapsedRuntimeForIdle()
+                    return@also
+                }
                 val elapsed = if (result.newState is RecordingState.Preparing) 0 else _runtime.value.elapsedSeconds
                 val current = _runtime.value
                 _runtime.value = current.copy(
@@ -480,6 +484,19 @@ class ScreenRecordingService : Service() {
                 if (result.newState !is RecordingState.Preparing) mainHandler.post { updateNotification(result.newState) }
             }
         }
+    }
+
+    private fun resetElapsedRuntimeForIdle() {
+        mainHandler.removeCallbacks(elapsedUpdater)
+        val current = _runtime.value
+        _runtime.value = current.copy(
+            state = RecordingState.Idle,
+            elapsedSeconds = 0,
+            countdownRemainingSeconds = null,
+            recordingStartedAtNanos = null,
+            pauseStartedAtNanos = null,
+            accumulatedPausedNanos = 0,
+        )
     }
 
     private val elapsedUpdater = object : Runnable {
@@ -586,7 +603,7 @@ class ScreenRecordingService : Service() {
             val stop = PendingIntent.getService(
                 this, STOP_REQUEST_CODE, stopIntent(this), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            builder.addAction(R.drawable.ic_record, getString(R.string.stop_recording), stop)
+            builder.addAction(R.drawable.ic_record, getString(R.string.stop), stop)
         }
         return builder.build()
     }

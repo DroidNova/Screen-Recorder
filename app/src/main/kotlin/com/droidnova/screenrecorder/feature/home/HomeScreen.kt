@@ -33,6 +33,7 @@ import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.domain.recording.RecordingPreset
 import com.droidnova.screenrecorder.domain.recording.RecordingState
+import com.droidnova.screenrecorder.domain.recording.hasActiveOrFinalizingSession
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.ui.theme.Spacing
 import java.text.NumberFormat
@@ -46,7 +47,6 @@ fun HomeScreen(
     elapsedSeconds: Long = 0,
     countdownRemainingSeconds: Int? = null,
     availableStorageBytes: Long? = null,
-    statusMessage: String? = null,
     onStartRecording: () -> Unit = {}, onStopRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {}, onResumeRecording: () -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
@@ -71,7 +71,7 @@ fun HomeScreen(
                     Header(); Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText, { openSheet = it })
                 }
                 TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
-                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage, Modifier.weight(1f))
+                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, Modifier.weight(1f))
             }
         } else {
             Column(contentModifier, verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
@@ -79,7 +79,7 @@ fun HomeScreen(
                 Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText || viewportWidth < 350.dp, { openSheet = it })
                 Spacer(Modifier.height((viewportHeight - 560.dp).coerceIn(32.dp, 180.dp)))
                 TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
-                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage)
+                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording)
             }
         }
     }
@@ -107,7 +107,7 @@ private fun Metrics(
             { open(HomeSheet.Quality) }, Modifier.weight(1f))
         MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable,
             { open(HomeSheet.Resolution) }, Modifier.weight(1f))
-        MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable,
+        MetricIndicator(selected?.let { stringResource(R.string.fps_value_uppercase, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable,
             { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
     }
     if (!grid) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Small), content = metrics)
@@ -118,7 +118,7 @@ private fun Metrics(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
             MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable, { open(HomeSheet.Resolution) }, Modifier.weight(1f))
-            MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable, { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
+            MetricIndicator(selected?.let { stringResource(R.string.fps_value_uppercase, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable, { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
         }
     }
 }
@@ -150,7 +150,7 @@ private fun Metrics(
             .clip(CircleShape).border(2.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
             .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = click)
             .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
+            Text(value, modifier = Modifier.padding(horizontal = 4.dp), fontSize = if (value.length > 6) 15.sp else 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
         }
         Spacer(Modifier.height(Spacing.Small)); Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
@@ -159,30 +159,35 @@ private fun Metrics(
 @Composable private fun TimerAndControls(
     state: RecordingState, elapsed: Long, countdown: Int?, valid: Boolean,
     start: () -> Unit, stop: () -> Unit, pause: () -> Unit, resume: () -> Unit,
-    message: String?, modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
-        val shown = if (state is RecordingState.Countdown) countdown?.toLong() ?: 0 else elapsed
+        val shown = when {
+            state is RecordingState.Countdown -> countdown?.toLong() ?: 0
+            state.hasActiveOrFinalizingSession -> elapsed
+            else -> 0
+        }
         Box(Modifier.width(224.dp).height(88.dp).border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) {
             Text(formatElapsed(shown), fontSize = 48.sp, fontWeight = FontWeight.Medium, maxLines = 1)
         }
         if (state is RecordingState.Paused) Text(stringResource(R.string.recording_paused), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         when (state) {
             RecordingState.Idle, is RecordingState.Completed, is RecordingState.Failed -> Button(start, enabled = valid,
-                modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 64.dp), shape = RoundedCornerShape(22.dp)) { Text(stringResource(R.string.start)) }
+                modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 64.dp), shape = RoundedCornerShape(22.dp)) {
+                Text(stringResource(R.string.start), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+            }
             is RecordingState.Countdown -> Button(stop, modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 60.dp)) { Text(stringResource(R.string.cancel)) }
             is RecordingState.Preparing -> ProgressAction(R.string.starting)
             is RecordingState.Recording -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
-                OutlinedButton(pause, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.pause_recording)) }
-                Button(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+                OutlinedButton(pause, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.pause_recording), maxLines = 1, softWrap = false) }
+                Button(stop, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop), maxLines = 1, softWrap = false) }
             }
             is RecordingState.Paused -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
-                Button(resume, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.resume_recording)) }
-                OutlinedButton(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+                Button(resume, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.resume_recording), maxLines = 1, softWrap = false) }
+                OutlinedButton(stop, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop), maxLines = 1, softWrap = false) }
             }
             is RecordingState.Stopping -> ProgressAction(R.string.saving)
         }
-        message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center) }
     }
 }
 
@@ -204,7 +209,7 @@ private fun Metrics(
         HomeSheet.FrameRate -> options.filter { selected == null || it.shortEdge == selected.shortEdge }.distinctBy { it.frameRate.framesPerSecond }.sortedBy { it.frameRate.framesPerSecond }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = Spacing.Section, vertical = Spacing.Small)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = Spacing.Section, vertical = Spacing.Small)) {
             Text(stringResource(when (sheet) { HomeSheet.Quality -> R.string.recording_quality; HomeSheet.Resolution -> R.string.resolution; HomeSheet.FrameRate -> R.string.frame_rate }),
                 style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = Spacing.Standard).semantics { heading() })
             choices.forEach { option ->

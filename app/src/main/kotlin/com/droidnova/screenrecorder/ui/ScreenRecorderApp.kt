@@ -9,7 +9,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +29,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
+import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.domain.recording.RecordingState
@@ -34,6 +37,10 @@ import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
 import com.droidnova.screenrecorder.recording.RecordingOutcomeType
+import com.droidnova.screenrecorder.ui.theme.RecorderNavigation
+import com.droidnova.screenrecorder.ui.theme.RecorderPrimary
+import com.droidnova.screenrecorder.ui.theme.RecorderPrimaryBright
+import com.droidnova.screenrecorder.ui.theme.RecorderTextSecondary
 import kotlinx.coroutines.launch
 
 @Composable
@@ -43,6 +50,10 @@ fun ScreenRecorderApp(
     countdownRemainingSeconds: Int? = null,
     availableStorageBytes: Long? = null,
     statusMessage: Int? = null,
+    onStatusMessageShown: () -> Unit = {},
+    onStatusMessageAction: () -> Unit = {},
+    onNotificationSettings: () -> Unit = {},
+    onApplicationSettings: () -> Unit = {},
     pendingOutcome: PendingRecordingOutcome? = null,
     onOutcomeShown: (Long) -> Unit = {},
     onStartRecording: () -> Unit = {},
@@ -64,10 +75,13 @@ fun ScreenRecorderApp(
         val navController = rememberNavController()
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
-        val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
         val snackbarHostState = remember { SnackbarHostState() }
         val snackbarScope = rememberCoroutineScope()
         val settingsResetMessage = stringResource(com.droidnova.screenrecorder.R.string.recording_settings_reset)
+        val transientMessage = statusMessage?.let { stringResource(it) }
+        val permissionMessage = statusMessage == com.droidnova.screenrecorder.R.string.notification_permission_required_message ||
+            statusMessage == com.droidnova.screenrecorder.R.string.microphone_permission_required_message
+        val settingsAction = stringResource(com.droidnova.screenrecorder.R.string.open_settings)
         val outcomeMessage = pendingOutcome?.let {
             stringResource(
                 when (it.type) {
@@ -87,36 +101,48 @@ fun ScreenRecorderApp(
         LaunchedEffect(recordingState) {
             if (recordingState is RecordingState.Completed || recordingState is RecordingState.Failed) onTerminalStateShown()
         }
+        LaunchedEffect(statusMessage) {
+            if (statusMessage == null || transientMessage == null) return@LaunchedEffect
+            val result = snackbarHostState.showSnackbar(
+                message = transientMessage,
+                actionLabel = if (permissionMessage) settingsAction else null,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == androidx.compose.material3.SnackbarResult.ActionPerformed) onStatusMessageAction()
+            onStatusMessageShown()
+        }
 
-        NavigationSuiteScaffold(
+        androidx.compose.material3.Scaffold(
             modifier = Modifier.fillMaxSize(),
-            navigationSuiteItems = {
-                TopLevelDestination.entries.forEach { destination ->
-                    val selected = currentRoute == destination.route
-                    item(
-                        selected = selected,
-                        onClick = {
-                            if (!selected) navController.navigate(destination.route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = {
-                            androidx.compose.material3.Icon(
-                                painter = painterResource(if (selected) destination.selectedIcon else destination.unselectedIcon),
-                                contentDescription = null,
-                            )
-                        },
-                        label = { Text(stringResource(destination.label)) },
-                    )
+            containerColor = MaterialTheme.colorScheme.background,
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            bottomBar = {
+                NavigationBar(containerColor = RecorderNavigation) {
+                    TopLevelDestination.entries.forEach { destination ->
+                        val selected = currentRoute == destination.route
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                if (!selected) navController.navigate(destination.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { androidx.compose.material3.Icon(painterResource(if (selected) destination.selectedIcon else destination.unselectedIcon), null) },
+                            label = { Text(stringResource(destination.label)) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = RecorderPrimaryBright,
+                                selectedTextColor = RecorderPrimaryBright,
+                                indicatorColor = RecorderPrimary.copy(alpha = 0.16f),
+                                unselectedIconColor = RecorderTextSecondary,
+                                unselectedTextColor = RecorderTextSecondary,
+                            ),
+                        )
+                    }
                 }
             },
-        ) {
-            androidx.compose.material3.Scaffold(
-                snackbarHost = { SnackbarHost(snackbarHostState) },
-                containerColor = MaterialTheme.colorScheme.background,
-            ) { padding ->
+        ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
                     NavHost(
                         navController = navController,
@@ -129,7 +155,6 @@ fun ScreenRecorderApp(
                                 elapsedSeconds = elapsedSeconds,
                                 countdownRemainingSeconds = countdownRemainingSeconds,
                                 availableStorageBytes = availableStorageBytes,
-                                statusMessage = statusMessage?.let { stringResource(it) },
                                 onStartRecording = onStartRecording,
                                 onStopRecording = onStopRecording,
                                 onPauseRecording = onPauseRecording,
@@ -157,6 +182,8 @@ fun ScreenRecorderApp(
                                 videoOptions = videoOptions,
                                 selectedVideo = selectedVideo,
                                 onVideoSelected = onVideoSelected,
+                                onNotificationSettings = onNotificationSettings,
+                                onApplicationSettings = onApplicationSettings,
                                 onReset = {
                                     onResetSettings()
                                     snackbarScope.launch { snackbarHostState.showSnackbar(settingsResetMessage) }
@@ -165,7 +192,6 @@ fun ScreenRecorderApp(
                         }
                     }
                 }
-            }
         }
     }
 }
