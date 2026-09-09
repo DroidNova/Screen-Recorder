@@ -59,7 +59,9 @@ fun HomeScreen(
     var openSheet by rememberSaveable { mutableStateOf<HomeSheet?>(null) }
     val editable = recordingState == RecordingState.Idle
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val landscape = maxWidth >= 600.dp && maxHeight < 600.dp
+        val viewportWidth = maxWidth
+        val viewportHeight = maxHeight
+        val landscape = viewportWidth >= 600.dp && viewportHeight < 600.dp
         val largeText = LocalDensity.current.fontScale > 1.3f
         val contentModifier = Modifier.fillMaxSize().widthIn(max = 840.dp).align(Alignment.TopCenter)
             .verticalScroll(rememberScrollState()).padding(horizontal = Spacing.Page, vertical = Spacing.Standard)
@@ -74,8 +76,8 @@ fun HomeScreen(
         } else {
             Column(contentModifier, verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
                 Header()
-                Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText || maxWidth < 350.dp, { openSheet = it })
-                Spacer(Modifier.height((maxHeight - 560.dp).coerceIn(32.dp, 180.dp)))
+                Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText || viewportWidth < 350.dp, { openSheet = it })
+                Spacer(Modifier.height((viewportHeight - 560.dp).coerceIn(32.dp, 180.dp)))
                 TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
                     onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage)
             }
