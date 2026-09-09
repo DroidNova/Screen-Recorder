@@ -28,7 +28,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.droidnova.screenrecorder.feature.home.HomeScreen
 import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
@@ -72,10 +71,10 @@ fun ScreenRecorderApp(
         val outcomeMessage = pendingOutcome?.let {
             stringResource(
                 when (it.type) {
-                    RecordingOutcomeType.IncompleteRecordingRemoved -> R.string.recording_recovered_removed
-                    RecordingOutcomeType.RecoveredRecordingSaved -> R.string.recording_recovered_saved
-                    RecordingOutcomeType.StorageLow -> R.string.recording_storage_low_stopped
-                    RecordingOutcomeType.FinalizationFailed -> R.string.recording_failed
+                    RecordingOutcomeType.IncompleteRecordingRemoved -> com.droidnova.screenrecorder.R.string.recording_recovered_removed
+                    RecordingOutcomeType.RecoveredRecordingSaved -> com.droidnova.screenrecorder.R.string.recording_recovered_saved
+                    RecordingOutcomeType.StorageLow -> com.droidnova.screenrecorder.R.string.recording_storage_low_stopped
+                    RecordingOutcomeType.FinalizationFailed -> com.droidnova.screenrecorder.R.string.recording_failed
                 },
             )
         }
