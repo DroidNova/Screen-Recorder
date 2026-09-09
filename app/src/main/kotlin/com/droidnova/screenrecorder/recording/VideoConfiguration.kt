@@ -71,14 +71,15 @@ object RecordingFilename {
     private const val PREFIX = "ScreenRecording_"
     fun fromEpochMillis(epochMillis: Long, collisionSequence: Long): String =
         "$PREFIX${epochMillis.coerceAtLeast(0)}_${collisionSequence.coerceAtLeast(0)}.mp4"
+    fun isAppRecording(name: String): Boolean = name.startsWith(PREFIX) && name.endsWith(".mp4")
 }
 
 data class OutputCompletion(
     val hasVideoTrack: Boolean,
-    val writtenVideoSamples: Int,
+    val writtenVideoSamples: Long,
     val videoReachedEndOfStream: Boolean,
     val hasAudioTrack: Boolean = false,
-    val writtenAudioSamples: Int = 0,
+    val writtenAudioSamples: Long = 0,
     val audioReachedEndOfStream: Boolean = true,
     val audioRequired: Boolean = false,
 )

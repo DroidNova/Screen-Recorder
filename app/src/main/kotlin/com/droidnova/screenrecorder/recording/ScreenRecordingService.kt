@@ -43,12 +43,17 @@ import com.droidnova.screenrecorder.domain.recording.RecordingStateMachine
 import com.droidnova.screenrecorder.domain.recording.StopReason
 import com.droidnova.screenrecorder.domain.recording.TransitionResult
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 data class RecordingRuntimeSnapshot(
     val state: RecordingState = RecordingState.Idle,
@@ -57,6 +62,7 @@ data class RecordingRuntimeSnapshot(
     val recordingStartedAtNanos: Long? = null,
     val pauseStartedAtNanos: Long? = null,
     val accumulatedPausedNanos: Long = 0,
+    val outcome: PendingRecordingOutcome? = null,
 )
 
 class ScreenRecordingService : Service() {
@@ -66,15 +72,28 @@ class ScreenRecordingService : Service() {
         fun requestPause() { this@ScreenRecordingService.requestPause() }
         fun requestResume() { this@ScreenRecordingService.requestResume() }
         fun acknowledgeTerminal() = dispatch(RecordingCommand.Acknowledge)
+        fun acknowledgeOutcome(id: Long) {
+            encoderExecutor.execute {
+                if (PendingOutputJournal(this@ScreenRecordingService).acknowledgeOutcome(id)) {
+                    synchronized(transitionLock) {
+                        if (_runtime.value.outcome?.id == id) _runtime.value = _runtime.value.copy(outcome = null)
+                    }
+                }
+            }
+        }
         fun acknowledgeBackgrounded() { countdownHandoff.countDown() }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val encoderExecutor = Executors.newSingleThreadExecutor()
+    private val storageExecutor = Executors.newSingleThreadScheduledExecutor()
     private val binder = LocalBinder()
     private val transitionLock = Any()
     private val cleanupStarted = AtomicBoolean(false)
     private var pipeline: AvcRecordingPipeline? = null
+    private var storageMonitor: ScheduledFuture<*>? = null
+    private var activeStoragePolicy: StoragePolicy? = null
+    private var currentSessionId = 0L
     private var countdownHandoff = CountDownLatch(1)
     private val _runtime = MutableStateFlow(RecordingRuntimeSnapshot())
     private val runtime: StateFlow<RecordingRuntimeSnapshot> = _runtime.asStateFlow()
@@ -96,6 +115,10 @@ class ScreenRecordingService : Service() {
     override fun onCreate() {
         super.onCreate()
         getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, mainHandler)
+        encoderExecutor.execute {
+            val outcome = runCatching { RecordingOutput.recover(this) }.getOrNull() ?: return@execute
+            _runtime.value = _runtime.value.copy(outcome = outcome)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -143,6 +166,7 @@ class ScreenRecordingService : Service() {
         synchronized(transitionLock) {
             if (_runtime.value.state != RecordingState.Idle) return
             cleanupStarted.set(false)
+            currentSessionId = sessionSequence.incrementAndGet()
             countdownHandoff = CountDownLatch(1)
             val requestedSettings = Milestone5Settings.default.copy(
                 preset = requireNotNull(preset),
@@ -208,6 +232,13 @@ class ScreenRecordingService : Service() {
                 completeWithoutCapture()
                 return
             }
+            val storageCheck = runBlocking { withContext(Dispatchers.IO) { RecordingStorage(this@ScreenRecordingService).check(bitrate, audioMode) } }
+            val policy = when (storageCheck) {
+                is StorageCheck.Available -> storageCheck.policy
+                is StorageCheck.Insufficient -> throw RecordingPipelineException(RecordingFailure.StorageUnavailable)
+                StorageCheck.Unavailable -> throw RecordingPipelineException(RecordingFailure.StorageUnavailable)
+            }
+            activeStoragePolicy = policy
             val manager = getSystemService(MediaProjectionManager::class.java)
             val projection = manager.getMediaProjection(resultCode, consentData)
                 ?: throw RecordingPipelineException(RecordingFailure.ProjectionUnavailable)
@@ -215,7 +246,7 @@ class ScreenRecordingService : Service() {
                 RecordingOutput.create(this, System.currentTimeMillis(), filenameSequence.incrementAndGet())
             } catch (_: RuntimeException) {
                 try { projection.stop() } catch (_: RuntimeException) { }
-                throw RecordingPipelineException(RecordingFailure.StorageFailure)
+                throw RecordingPipelineException(RecordingFailure.StorageWriteFailed)
             }
             val videoConfiguration = SelectedVideoConfiguration(
                 selected.encoderName,
@@ -234,10 +265,13 @@ class ScreenRecordingService : Service() {
                 }
             }
             mainHandler.post(elapsedUpdater)
+            startStorageMonitor()
             finalizeSession(ownedPipeline, ownedPipeline.drainUntilStopped(), null)
         } catch (error: RecordingPipelineException) {
+            RecorderLog.warning(currentSessionId, "session_failure_${error.failure.javaClass.simpleName}")
             finalizeSession(pipeline, null, error.failure)
         } catch (_: RuntimeException) {
+            RecorderLog.warning(currentSessionId, "session_failure_runtime")
             finalizeSession(pipeline, null, RecordingFailure.VideoEncoderFailure(FailureStage.Runtime))
         }
     }
@@ -275,12 +309,14 @@ class ScreenRecordingService : Service() {
         return false
     }
 
-    private fun updateCountdown(remaining: Int) = synchronized(transitionLock) {
-        val current = _runtime.value
-        if (current.state is RecordingState.Countdown) {
+    private fun updateCountdown(remaining: Int) {
+        val state = synchronized(transitionLock) {
+            val current = _runtime.value
+            if (current.state !is RecordingState.Countdown) return@synchronized null
             _runtime.value = current.copy(countdownRemainingSeconds = remaining)
-            updateNotification(current.state)
+            current.state
         }
+        state?.let { mainHandler.post { updateNotification(it) } }
     }
 
     private fun completeWithoutCapture() {
@@ -298,39 +334,53 @@ class ScreenRecordingService : Service() {
         return accepted
     }
 
-    private fun requestPause(): Boolean = synchronized(transitionLock) {
-        val current = _runtime.value
-        if (current.state !is RecordingState.Recording) return@synchronized false
+    private fun startStorageMonitor() {
+        check(storageMonitor == null)
+        storageMonitor = storageExecutor.scheduleWithFixedDelay({
+            val policy = activeStoragePolicy ?: return@scheduleWithFixedDelay
+            val check = RecordingStorage(this).availableBytes()
+            if (check == null || check <= policy.lowStorageStopBytes) requestStop(StopReason.LowStorage)
+        }, STORAGE_MONITOR_SECONDS, STORAGE_MONITOR_SECONDS, TimeUnit.SECONDS)
+    }
+
+    private fun cancelStorageMonitor() {
+        storageMonitor?.cancel(false)
+        storageMonitor = null
+        activeStoragePolicy = null
+    }
+
+    private fun requestPause(): Boolean {
+        if (_runtime.value.state !is RecordingState.Recording) return false
         try {
-            pipeline?.pause() ?: return@synchronized false
+            pipeline?.pause() ?: return false
         } catch (error: RecordingPipelineException) {
-            applyTransitionLocked(RecordingEvent.FatalFailure(error.failure))
+            dispatch(RecordingEvent.FatalFailure(error.failure))
             pipeline?.requestStop()
-            return@synchronized false
+            return false
         }
-        val result = applyTransitionLocked(RecordingCommand.Pause)
-        if (result is TransitionResult.Accepted) {
+        val result = dispatch(RecordingCommand.Pause)
+        if (result is TransitionResult.Accepted) synchronized(transitionLock) {
             val now = SystemClock.elapsedRealtimeNanos()
             val updated = _runtime.value.copy(pauseStartedAtNanos = now)
             _runtime.value = updated.copy(elapsedSeconds = activeElapsedSeconds(updated, now))
         }
-        result is TransitionResult.Accepted
+        return result is TransitionResult.Accepted
     }
 
-    private fun requestResume(): Boolean = synchronized(transitionLock) {
+    private fun requestResume(): Boolean {
         val current = _runtime.value
-        if (current.state !is RecordingState.Paused) return@synchronized false
+        if (current.state !is RecordingState.Paused) return false
         try {
-            pipeline?.resume() ?: return@synchronized false
+            pipeline?.resume() ?: return false
         } catch (error: RecordingPipelineException) {
-            applyTransitionLocked(RecordingEvent.FatalFailure(error.failure))
+            dispatch(RecordingEvent.FatalFailure(error.failure))
             pipeline?.requestStop()
-            return@synchronized false
+            return false
         }
         val now = SystemClock.elapsedRealtimeNanos()
         val pauseStarted = current.pauseStartedAtNanos ?: now
-        val result = applyTransitionLocked(RecordingCommand.Resume)
-        if (result is TransitionResult.Accepted) {
+        val result = dispatch(RecordingCommand.Resume)
+        if (result is TransitionResult.Accepted) synchronized(transitionLock) {
             _runtime.value = _runtime.value.copy(
                 pauseStartedAtNanos = null,
                 accumulatedPausedNanos = current.accumulatedPausedNanos +
@@ -339,7 +389,7 @@ class ScreenRecordingService : Service() {
             mainHandler.removeCallbacks(elapsedUpdater)
             mainHandler.post(elapsedUpdater)
         }
-        result is TransitionResult.Accepted
+        return result is TransitionResult.Accepted
     }
 
     private fun finalizeSession(
@@ -348,21 +398,35 @@ class ScreenRecordingService : Service() {
         failure: RecordingFailure?,
     ) {
         if (!cleanupStarted.compareAndSet(false, true)) return
+        cancelStorageMonitor()
         val output = ownedPipeline?.takeOutput()
         var publishable = false
         try {
             val resourcesFinalized = ownedPipeline?.release(projectionCallback) == true
             output?.closeDescriptor()
             publishable = failure == null && completion?.canPublish() == true && resourcesFinalized
-            if (publishable) output?.publish() else output?.discard()
+            if (publishable) {
+                try {
+                    output?.publish()
+                } catch (_: RuntimeException) {
+                    // READY_TO_PUBLISH remains durable so recovery can retry publication.
+                    publishable = false
+                }
+            } else output?.discard()
         } catch (_: RuntimeException) {
             publishable = false
-            try { output?.discard() } catch (_: RuntimeException) { }
+            try { output?.closeDescriptor(); output?.discard() } catch (_: RuntimeException) { }
         } finally {
             pipeline = null
         }
         if (publishable) {
             dispatch(RecordingEvent.FinalizationSucceeded)
+            val reason = (_runtime.value.state as? RecordingState.Completed)?.reason
+            if (reason == StopReason.LowStorage) {
+                _runtime.value = _runtime.value.copy(
+                    outcome = PendingOutputJournal(this).storeOutcome(RecordingOutcomeType.StorageLow),
+                )
+            }
         } else {
             val current = _runtime.value.state
             if (current is RecordingState.Stopping) {
@@ -370,6 +434,9 @@ class ScreenRecordingService : Service() {
             } else {
                 dispatch(RecordingEvent.FatalFailure(failure ?: RecordingFailure.FinalizationFailure))
             }
+            _runtime.value = _runtime.value.copy(
+                outcome = PendingOutputJournal(this).storeOutcome(RecordingOutcomeType.FinalizationFailed),
+            )
         }
         finishService()
     }
@@ -410,7 +477,7 @@ class ScreenRecordingService : Service() {
                     pauseStartedAtNanos = if (result.newState is RecordingState.Preparing) null else current.pauseStartedAtNanos,
                     accumulatedPausedNanos = if (result.newState is RecordingState.Preparing) 0 else current.accumulatedPausedNanos,
                 )
-                if (result.newState !is RecordingState.Preparing) updateNotification(result.newState)
+                if (result.newState !is RecordingState.Preparing) mainHandler.post { updateNotification(result.newState) }
             }
         }
     }
@@ -421,7 +488,6 @@ class ScreenRecordingService : Service() {
                 val current = _runtime.value
                 if (current.state is RecordingState.Recording) {
                     _runtime.value = current.copy(elapsedSeconds = activeElapsedSeconds(current))
-                    updateNotification(current.state)
                     mainHandler.postDelayed(this, 1_000)
                 }
             }
@@ -474,16 +540,16 @@ class ScreenRecordingService : Service() {
             .setContentTitle(getString(R.string.recording_notification_title))
             .setContentText(
                 when {
-                    state is RecordingState.Paused -> getString(R.string.recording_notification_paused)
-                    _runtime.value.countdownRemainingSeconds != null -> getString(
-                        R.string.recording_countdown_notification,
-                        _runtime.value.countdownRemainingSeconds,
-                    )
-                    state is RecordingState.Recording -> getString(
+                    state is RecordingState.Paused -> getString(
                         R.string.recording_notification_elapsed,
                         _runtime.value.elapsedSeconds / 60,
                         _runtime.value.elapsedSeconds % 60,
                     )
+                    _runtime.value.countdownRemainingSeconds != null -> getString(
+                        R.string.recording_countdown_notification,
+                        _runtime.value.countdownRemainingSeconds,
+                    )
+                    state is RecordingState.Recording -> getString(R.string.recording_notification_body)
                     else -> getString(R.string.recording_notification_body)
                 },
             )
@@ -491,6 +557,12 @@ class ScreenRecordingService : Service() {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        if (state is RecordingState.Recording) {
+            builder.setWhen(System.currentTimeMillis() - _runtime.value.elapsedSeconds * 1_000L)
+                .setUsesChronometer(true)
+        } else {
+            builder.setUsesChronometer(false)
+        }
         if (state is RecordingState.Recording) {
             builder.addAction(
                 R.drawable.ic_record,
@@ -527,6 +599,8 @@ class ScreenRecordingService : Service() {
             pipeline?.requestStop()
         }
         encoderExecutor.shutdown()
+        cancelStorageMonitor()
+        storageExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -554,7 +628,9 @@ class ScreenRecordingService : Service() {
         private const val PAUSE_REQUEST_CODE = 2
         private const val RESUME_REQUEST_CODE = 3
         private const val NANOS_PER_SECOND = 1_000_000_000L
+        private const val STORAGE_MONITOR_SECONDS = 30L
         private val filenameSequence = AtomicLong()
+        private val sessionSequence = AtomicLong()
 
         fun startIntent(
             context: Context,

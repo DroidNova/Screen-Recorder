@@ -3,16 +3,18 @@ package com.droidnova.screenrecorder.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.Text
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -24,22 +26,25 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.droidnova.screenrecorder.feature.home.HomeScreen
-import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
 import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
+import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
+import com.droidnova.screenrecorder.recording.RecordingOutcomeType
+import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderApp(
     recordingState: RecordingState = RecordingState.Idle,
     elapsedSeconds: Long = 0,
     countdownRemainingSeconds: Int? = null,
+    availableStorageBytes: Long? = null,
     statusMessage: Int? = null,
+    pendingOutcome: PendingRecordingOutcome? = null,
+    onOutcomeShown: (Long) -> Unit = {},
     onStartRecording: () -> Unit = {},
     onStopRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {},
@@ -53,12 +58,32 @@ fun ScreenRecorderApp(
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     countdownSeconds: Int = 0,
     onCountdownSelected: (Int) -> Unit = {},
+    onResetSettings: () -> Unit = {},
 ) {
     ScreenRecorderTheme {
         val navController = rememberNavController()
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
         val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
+        val snackbarHostState = remember { SnackbarHostState() }
+        val snackbarScope = rememberCoroutineScope()
+        val settingsResetMessage = stringResource(com.droidnova.screenrecorder.R.string.recording_settings_reset)
+        val outcomeMessage = pendingOutcome?.let {
+            stringResource(
+                when (it.type) {
+                    RecordingOutcomeType.IncompleteRecordingRemoved -> com.droidnova.screenrecorder.R.string.recording_recovered_removed
+                    RecordingOutcomeType.RecoveredRecordingSaved -> com.droidnova.screenrecorder.R.string.recording_recovered_saved
+                    RecordingOutcomeType.StorageLow -> com.droidnova.screenrecorder.R.string.recording_storage_low_stopped
+                    RecordingOutcomeType.FinalizationFailed -> com.droidnova.screenrecorder.R.string.recording_failed
+                },
+            )
+        }
+        LaunchedEffect(pendingOutcome?.id) {
+            val outcome = pendingOutcome ?: return@LaunchedEffect
+            val message = outcomeMessage ?: return@LaunchedEffect
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Long)
+            onOutcomeShown(outcome.id)
+        }
         LaunchedEffect(recordingState) {
             if (recordingState is RecordingState.Completed || recordingState is RecordingState.Failed) onTerminalStateShown()
         }
@@ -89,8 +114,7 @@ fun ScreenRecorderApp(
             },
         ) {
             androidx.compose.material3.Scaffold(
-                modifier = Modifier.safeDrawingPadding(),
-                topBar = { TopAppBar(title = { Text(stringResource(current.label)) }) },
+                snackbarHost = { SnackbarHost(snackbarHostState) },
                 containerColor = MaterialTheme.colorScheme.background,
             ) { padding ->
                 Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.TopCenter) {
@@ -100,10 +124,11 @@ fun ScreenRecorderApp(
                         modifier = Modifier.widthIn(max = 840.dp).fillMaxSize(),
                     ) {
                         composable(TopLevelDestination.Home.route) {
-                            HomeScreen(
+                            com.droidnova.screenrecorder.feature.home.HomeScreen(
                                 recordingState = recordingState,
                                 elapsedSeconds = elapsedSeconds,
                                 countdownRemainingSeconds = countdownRemainingSeconds,
+                                availableStorageBytes = availableStorageBytes,
                                 statusMessage = statusMessage?.let { stringResource(it) },
                                 onStartRecording = onStartRecording,
                                 onStopRecording = onStopRecording,
@@ -116,7 +141,11 @@ fun ScreenRecorderApp(
                                 audioMode = audioMode,
                             )
                         }
-                        composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
+                        composable(TopLevelDestination.Recordings.route) {
+                            RecordingsScreen(showMessage = { message ->
+                                snackbarScope.launch { snackbarHostState.showSnackbar(message) }
+                            })
+                        }
                         composable(TopLevelDestination.Settings.route) {
                             SettingsScreen(
                                 audioMode = audioMode,
@@ -125,6 +154,13 @@ fun ScreenRecorderApp(
                                 onAudioModeSelected = onAudioModeSelected,
                                 countdownSeconds = countdownSeconds,
                                 onCountdownSelected = onCountdownSelected,
+                                videoOptions = videoOptions,
+                                selectedVideo = selectedVideo,
+                                onVideoSelected = onVideoSelected,
+                                onReset = {
+                                    onResetSettings()
+                                    snackbarScope.launch { snackbarHostState.showSnackbar(settingsResetMessage) }
+                                },
                             )
                         }
                     }
