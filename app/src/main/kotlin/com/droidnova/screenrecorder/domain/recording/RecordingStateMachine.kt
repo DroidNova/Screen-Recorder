@@ -11,6 +11,12 @@ sealed interface RecordingState {
     data class Failed(val settings: RecordingSettings, val failure: RecordingFailure) : RecordingState
 }
 
+/** True while elapsed recording time is meaningful to users, including finalization. */
+val RecordingState.hasActiveOrFinalizingSession: Boolean
+    get() = this is RecordingState.Recording ||
+        this is RecordingState.Paused ||
+        this is RecordingState.Stopping
+
 sealed interface TransitionResult {
     data class Accepted(val previousState: RecordingState, val newState: RecordingState) : TransitionResult
     data class Rejected(

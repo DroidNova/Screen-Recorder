@@ -19,18 +19,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.core.app.ActivityCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,9 +48,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
-@OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : ComponentActivity() {
-    private enum class StartStep { Explanation, NotificationPermission, NotificationDenied, AudioPermission, AudioDenied, Projection, Starting }
+    private enum class StartStep { NotificationPermission, AudioPermission, Projection, Starting }
     private var pendingStartStep = mutableStateOf<StartStep?>(null)
     private var pendingVideo: AvailableVideoConfiguration? = null
     private var pendingCountdown = 0
@@ -70,12 +57,7 @@ class MainActivity : ComponentActivity() {
     private var preferences = RecordingPreferences()
     private var projectionConsentPending = false
     private var notificationPermissionPending = false
-    private var notificationPermissionRequested = false
     private var microphonePermissionPending = false
-    private var microphonePermissionRequested = false
-    private var backgroundWhenRecordingStarts = false
-    private val showNotificationPermissionExplanation = mutableStateOf(false)
-    private val showMicrophonePermissionExplanation = mutableStateOf(false)
     private val storageDialog = mutableStateOf<StorageCheck?>(null)
     private val availableStorageBytes = mutableStateOf<Long?>(null)
     private var storagePreflightPending = false
@@ -112,13 +94,19 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         notificationPermissionPending = false
         if (pendingStartStep.value != StartStep.NotificationPermission) return@registerForActivityResult
-        if (granted) continueAudioPermission() else pendingStartStep.value = StartStep.NotificationDenied
+        if (granted) continueAudioPermission() else {
+            statusMessage.value = R.string.notification_permission_required_message
+            clearPendingStart()
+        }
     }
 
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         microphonePermissionPending = false
         if (pendingStartStep.value != StartStep.AudioPermission) return@registerForActivityResult
-        if (granted) launchProjectionConsent() else pendingStartStep.value = StartStep.AudioDenied
+        if (granted) launchProjectionConsent() else {
+            statusMessage.value = R.string.microphone_permission_required_message
+            clearPendingStart()
+        }
     }
 
     private val projectionConsent = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -126,7 +114,6 @@ class MainActivity : ComponentActivity() {
         if (pendingStartStep.value != StartStep.Projection) return@registerForActivityResult
         val data = result.data
         if (result.resultCode != Activity.RESULT_OK || data == null) {
-            backgroundWhenRecordingStarts = false
             statusMessage.value = R.string.recording_consent_denied
             clearPendingStart()
             return@registerForActivityResult
@@ -159,7 +146,6 @@ class MainActivity : ComponentActivity() {
             pendingStartStep.value = StartStep.Starting
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent) else startService(serviceIntent)
         } catch (_: RuntimeException) {
-            backgroundWhenRecordingStarts = false
             statusMessage.value = R.string.recording_start_failed
             clearPendingStart()
         }
@@ -185,12 +171,7 @@ class MainActivity : ComponentActivity() {
         }
         projectionConsentPending = savedInstanceState?.getBoolean(STATE_PROJECTION_CONSENT_PENDING) == true
         notificationPermissionPending = savedInstanceState?.getBoolean(STATE_NOTIFICATION_PERMISSION_PENDING) == true
-        notificationPermissionRequested = savedInstanceState?.getBoolean(STATE_NOTIFICATION_PERMISSION_REQUESTED) == true
         microphonePermissionPending = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_PENDING) == true
-        microphonePermissionRequested = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_REQUESTED) == true
-        backgroundWhenRecordingStarts = savedInstanceState?.getBoolean(STATE_BACKGROUND_WHEN_RECORDING) == true
-        showNotificationPermissionExplanation.value = savedInstanceState?.getBoolean(STATE_SHOW_NOTIFICATION_EXPLANATION) == true
-        showMicrophonePermissionExplanation.value = savedInstanceState?.getBoolean(STATE_SHOW_MICROPHONE_EXPLANATION) == true
         lifecycleScope.launch {
             val configuration = resources.configuration
             val density = resources.displayMetrics.density
@@ -219,6 +200,13 @@ class MainActivity : ComponentActivity() {
                 countdownRemainingSeconds = runtime.countdownRemainingSeconds,
                 availableStorageBytes = availableStorageBytes.value,
                 statusMessage = statusMessage.value,
+                onStatusMessageShown = { statusMessage.value = null },
+                onStatusMessageAction = {
+                    if (statusMessage.value == R.string.notification_permission_required_message) openNotificationSettings()
+                    else openApplicationSettingsForPending()
+                },
+                onNotificationSettings = ::openNotificationSettings,
+                onApplicationSettings = ::openApplicationSettingsForPending,
                 pendingOutcome = runtime.outcome,
                 onOutcomeShown = { serviceBinder?.acknowledgeOutcome(it) },
                 onStartRecording = ::requestRecordingPermissions,
@@ -241,49 +229,6 @@ class MainActivity : ComponentActivity() {
                 onCountdownSelected = { lifecycleScope.launch { preferencesRepository.saveCountdown(it) } },
                 onResetSettings = { lifecycleScope.launch { preferencesRepository.reset() } },
             )
-            if (showNotificationPermissionExplanation.value) {
-                AlertDialog(
-                    onDismissRequest = { showNotificationPermissionExplanation.value = false },
-                    title = { Text(stringResource(R.string.notification_permission_title)) },
-                    text = { Text(stringResource(R.string.notification_permission_explanation)) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showNotificationPermissionExplanation.value = false
-                            launchProjectionConsent()
-                        }) { Text(stringResource(R.string.continue_without_notification)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = ::openNotificationSettings) {
-                            Text(stringResource(R.string.notification_settings))
-                        }
-                        TextButton(onClick = { showNotificationPermissionExplanation.value = false }) {
-                            Text(stringResource(R.string.cancel))
-                        }
-                    },
-                )
-            }
-            if (showMicrophonePermissionExplanation.value) {
-                AlertDialog(
-                    onDismissRequest = { showMicrophonePermissionExplanation.value = false },
-                    title = { Text(stringResource(R.string.microphone_permission_title)) },
-                    text = { Text(stringResource(R.string.microphone_permission_explanation)) },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showMicrophonePermissionExplanation.value = false
-                            requestedSessionAudioMode = AudioMode.None
-                            continueNotificationPermission()
-                        }) { Text(stringResource(R.string.record_without_audio)) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = ::openApplicationSettings) {
-                            Text(stringResource(R.string.app_settings))
-                        }
-                        TextButton(onClick = { showMicrophonePermissionExplanation.value = false }) {
-                            Text(stringResource(R.string.cancel))
-                        }
-                    },
-                )
-            }
             storageDialog.value?.let { failure ->
                 val minimum = (failure as? StorageCheck.Insufficient)?.policy?.minimumStartBytes
                 AlertDialog(
@@ -294,45 +239,13 @@ class MainActivity : ComponentActivity() {
                     dismissButton = { TextButton(onClick = { storageDialog.value = null }) { Text(stringResource(R.string.cancel)) } },
                 )
             }
-            pendingStartStep.value?.takeIf {
-                it == StartStep.Explanation || it == StartStep.NotificationDenied || it == StartStep.AudioDenied
-            }?.let { step ->
-                ModalBottomSheet(onDismissRequest = { clearPendingStart() }) {
-                    PermissionSheet(
-                        step = step,
-                        audioMode = requestedSessionAudioMode,
-                        video = pendingVideo,
-                        countdownSeconds = pendingCountdown,
-                        notificationGranted = hasPermission(Manifest.permission.POST_NOTIFICATIONS),
-                        audioGranted = hasPermission(Manifest.permission.RECORD_AUDIO),
-                        onContinue = {
-                            when (step) {
-                                StartStep.Explanation -> advancePendingStart()
-                                StartStep.NotificationDenied -> continueAudioPermission()
-                                else -> Unit
-                            }
-                        },
-                        onWithoutAudio = {
-                            requestedSessionAudioMode = AudioMode.None
-                            launchProjectionConsent()
-                        },
-                        onSettings = { openApplicationSettingsForPending() },
-                        onCancel = { clearPendingStart() },
-                    )
-                }
-            }
         }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_PROJECTION_CONSENT_PENDING, projectionConsentPending)
         outState.putBoolean(STATE_NOTIFICATION_PERMISSION_PENDING, notificationPermissionPending)
-        outState.putBoolean(STATE_NOTIFICATION_PERMISSION_REQUESTED, notificationPermissionRequested)
         outState.putBoolean(STATE_MICROPHONE_PERMISSION_PENDING, microphonePermissionPending)
-        outState.putBoolean(STATE_MICROPHONE_PERMISSION_REQUESTED, microphonePermissionRequested)
-        outState.putBoolean(STATE_BACKGROUND_WHEN_RECORDING, backgroundWhenRecordingStarts)
-        outState.putBoolean(STATE_SHOW_NOTIFICATION_EXPLANATION, showNotificationPermissionExplanation.value)
-        outState.putBoolean(STATE_SHOW_MICROPHONE_EXPLANATION, showMicrophonePermissionExplanation.value)
         outState.putString(STATE_REQUESTED_AUDIO_MODE, requestedSessionAudioMode.name)
         outState.putString(STATE_PENDING_START_STEP, pendingStartStep.value?.name)
         outState.putInt(STATE_PENDING_COUNTDOWN, pendingCountdown)
@@ -346,15 +259,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         serviceBound = bindService(Intent(this, ScreenRecordingService::class.java), serviceConnection, BIND_AUTO_CREATE)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        when (pendingStartStep.value) {
-            StartStep.NotificationDenied -> if (hasPermission(Manifest.permission.POST_NOTIFICATIONS)) continueAudioPermission()
-            StartStep.AudioDenied -> if (hasPermission(Manifest.permission.RECORD_AUDIO)) launchProjectionConsent()
-            else -> Unit
-        }
     }
 
     override fun onStop() {
@@ -396,7 +300,7 @@ class MainActivity : ComponentActivity() {
             }
             pendingVideo = selectedVideo
             pendingCountdown = countdownSeconds.value
-            pendingStartStep.value = StartStep.Explanation
+            continueNotificationPermission()
         }
     }
 
@@ -405,14 +309,10 @@ class MainActivity : ComponentActivity() {
         if (requestedSessionAudioMode != AudioMode.None &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
         ) {
-            if (preferences.audioRequestedBefore && !ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
-                pendingStartStep.value = StartStep.AudioDenied
-            } else {
-                lifecycleScope.launch { preferencesRepository.markAudioRequested() }
-                microphonePermissionPending = true
-                pendingStartStep.value = StartStep.AudioPermission
-                microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-            }
+            lifecycleScope.launch { preferencesRepository.markAudioRequested() }
+            microphonePermissionPending = true
+            pendingStartStep.value = StartStep.AudioPermission
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
             return
         }
         launchProjectionConsent()
@@ -423,14 +323,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            if (preferences.notificationRequestedBefore && !ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS)) {
-                pendingStartStep.value = StartStep.NotificationDenied
-            } else {
-                lifecycleScope.launch { preferencesRepository.markNotificationRequested() }
-                notificationPermissionPending = true
-                pendingStartStep.value = StartStep.NotificationPermission
-                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+            lifecycleScope.launch { preferencesRepository.markNotificationRequested() }
+            notificationPermissionPending = true
+            pendingStartStep.value = StartStep.NotificationPermission
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
         continueAudioPermission()
@@ -446,8 +342,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestInProgress(): Boolean =
-        pendingStartStep.value != null || storagePreflightPending || microphonePermissionPending || notificationPermissionPending || projectionConsentPending ||
-            showMicrophonePermissionExplanation.value || showNotificationPermissionExplanation.value
+        pendingStartStep.value != null || storagePreflightPending || microphonePermissionPending ||
+            notificationPermissionPending || projectionConsentPending
 
     private fun applyRuntimeSnapshot(snapshot: RecordingRuntimeSnapshot) {
         recordingRuntime.value = snapshot
@@ -461,14 +357,8 @@ class MainActivity : ComponentActivity() {
             snapshot.state is RecordingState.Failed ||
             snapshot.state is RecordingState.Completed
         ) {
-            backgroundWhenRecordingStarts = false
             if (pendingStartStep.value == StartStep.Starting) clearPendingStart()
         }
-    }
-
-    private fun advancePendingStart() {
-        if (pendingStartStep.value != StartStep.Explanation) return
-        continueNotificationPermission()
     }
 
     private fun clearPendingStart() {
@@ -476,12 +366,13 @@ class MainActivity : ComponentActivity() {
         projectionConsentPending = false; notificationPermissionPending = false; microphonePermissionPending = false
     }
 
-    private fun hasPermission(permission: String): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU && permission == Manifest.permission.POST_NOTIFICATIONS ||
-        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-
     private fun openApplicationSettingsForPending() {
         try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName"))) }
         catch (_: android.content.ActivityNotFoundException) { statusMessage.value = R.string.recording_start_failed }
+    }
+
+    private fun openNotificationSettings() {
+        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
     }
 
     private fun resolvePreference(options: List<AvailableVideoConfiguration>, stored: RecordingPreferences): AvailableVideoConfiguration? =
@@ -489,19 +380,6 @@ class MainActivity : ComponentActivity() {
             it.shortEdge == stored.customShortEdge && it.frameRate.framesPerSecond == stored.customFps && it.bitrate.bitsPerSecond == stored.customBitrate
         }?.copy(preset = stored.preset) else options.firstOrNull { it.preset == stored.preset }
             ?: options.firstOrNull { it.preset == com.droidnova.screenrecorder.domain.recording.RecordingPreset.Balanced }
-
-    private fun openNotificationSettings() {
-        showNotificationPermissionExplanation.value = false
-        startActivity(
-            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(Settings.EXTRA_APP_PACKAGE, packageName),
-        )
-    }
-
-    private fun openApplicationSettings() {
-        showMicrophonePermissionExplanation.value = false
-        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
-    }
 
     private fun openStorageSettings() {
         storageDialog.value = null
@@ -518,64 +396,10 @@ class MainActivity : ComponentActivity() {
     private fun AvailableVideoConfiguration.sameEncodingAs(other: AvailableVideoConfiguration): Boolean =
         encoderName == other.encoderName && resolution == other.resolution && frameRate == other.frameRate && bitrate == other.bitrate
 
-    @androidx.compose.runtime.Composable
-    private fun PermissionSheet(
-        step: StartStep,
-        audioMode: AudioMode,
-        video: AvailableVideoConfiguration?,
-        countdownSeconds: Int,
-        notificationGranted: Boolean,
-        audioGranted: Boolean,
-        onContinue: () -> Unit,
-        onWithoutAudio: () -> Unit,
-        onSettings: () -> Unit,
-        onCancel: () -> Unit,
-    ) {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(stringResource(R.string.permission_sheet_title), style = androidx.compose.material3.MaterialTheme.typography.headlineSmall)
-            Text(stringResource(R.string.permission_sheet_supporting))
-            video?.let {
-                Text(stringResource(R.string.capture), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                Text(stringResource(R.string.capture_summary_value, it.shortEdge, it.frameRate.framesPerSecond, it.bitrate.bitsPerSecond / 1_000_000))
-                Text(stringResource(R.string.countdown_summary, if (countdownSeconds == 0) stringResource(R.string.countdown_off) else stringResource(R.string.countdown_seconds, countdownSeconds)), color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text(stringResource(R.string.screen_capture_permission), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-            Text(stringResource(R.string.screen_capture_permission_detail))
-            Text(stringResource(R.string.permission_required_every_recording), color = androidx.compose.material3.MaterialTheme.colorScheme.primary)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                Text(stringResource(R.string.notifications), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                Text(stringResource(R.string.notification_permission_detail))
-                Text(stringResource(if (notificationGranted) R.string.permission_allowed else if (step == StartStep.NotificationDenied) R.string.permission_off_settings else R.string.permission_required))
-            }
-            Text(stringResource(if (audioMode == AudioMode.Microphone) R.string.audio_microphone else if (audioMode == AudioMode.DeviceAudio) R.string.audio_device else R.string.audio), style = androidx.compose.material3.MaterialTheme.typography.titleMedium)
-            Text(stringResource(if (audioMode == AudioMode.None) R.string.audio_not_used_detail else if (audioMode == AudioMode.Microphone) R.string.microphone_permission_detail else R.string.device_audio_permission_detail))
-            Text(stringResource(if (audioMode == AudioMode.None) R.string.permission_not_used else if (audioGranted) R.string.permission_allowed else if (step == StartStep.AudioDenied) R.string.permission_off_settings else R.string.permission_required))
-            Text(stringResource(R.string.permission_privacy_note), style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-            if (step == StartStep.AudioDenied) {
-                TextButton(onClick = onWithoutAudio) { Text(stringResource(R.string.record_without_audio)) }
-                TextButton(onClick = onSettings) { Text(stringResource(R.string.open_settings)) }
-            } else if (step == StartStep.NotificationDenied) {
-                TextButton(onClick = onContinue) { Text(stringResource(R.string.continue_without_notification)) }
-                TextButton(onClick = onSettings) { Text(stringResource(R.string.open_settings)) }
-            } else {
-                TextButton(onClick = onContinue) { Text(stringResource(R.string.continue_label)) }
-            }
-            TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-        }
-    }
-
     private companion object {
         const val STATE_PROJECTION_CONSENT_PENDING = "projection_consent_pending"
         const val STATE_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
-        const val STATE_NOTIFICATION_PERMISSION_REQUESTED = "notification_permission_requested"
         const val STATE_MICROPHONE_PERMISSION_PENDING = "microphone_permission_pending"
-        const val STATE_MICROPHONE_PERMISSION_REQUESTED = "microphone_permission_requested"
-        const val STATE_BACKGROUND_WHEN_RECORDING = "background_when_recording"
-        const val STATE_SHOW_NOTIFICATION_EXPLANATION = "show_notification_explanation"
-        const val STATE_SHOW_MICROPHONE_EXPLANATION = "show_microphone_explanation"
         const val STATE_SELECTED_AUDIO_MODE = "selected_audio_mode"
         const val STATE_REQUESTED_AUDIO_MODE = "requested_audio_mode"
         const val STATE_COUNTDOWN_SECONDS = "countdown_seconds"
