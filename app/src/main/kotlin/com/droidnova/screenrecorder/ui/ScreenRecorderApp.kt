@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -36,6 +37,7 @@ import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
 import com.droidnova.screenrecorder.recording.RecordingOutcomeType
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -67,6 +69,7 @@ fun ScreenRecorderApp(
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
         val current = TopLevelDestination.entries.firstOrNull { it.route == currentRoute } ?: TopLevelDestination.Home
         val snackbarHostState = remember { SnackbarHostState() }
+        val snackbarScope = rememberCoroutineScope()
         val outcomeMessage = pendingOutcome?.let {
             stringResource(
                 when (it.type) {
@@ -142,7 +145,11 @@ fun ScreenRecorderApp(
                                 audioMode = audioMode,
                             )
                         }
-                        composable(TopLevelDestination.Recordings.route) { RecordingsScreen() }
+                        composable(TopLevelDestination.Recordings.route) {
+                            RecordingsScreen(showMessage = { message ->
+                                snackbarScope.launch { snackbarHostState.showSnackbar(message) }
+                            })
+                        }
                         composable(TopLevelDestination.Settings.route) {
                             SettingsScreen(
                                 audioMode = audioMode,
