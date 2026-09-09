@@ -603,7 +603,7 @@ class ScreenRecordingService : Service() {
             val stop = PendingIntent.getService(
                 this, STOP_REQUEST_CODE, stopIntent(this), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
-            builder.addAction(R.drawable.ic_record, getString(R.string.stop_recording), stop)
+            builder.addAction(R.drawable.ic_record, getString(R.string.stop), stop)
         }
         return builder.build()
     }
