@@ -122,7 +122,7 @@ internal class RecordingOutput private constructor(
     fun closeDescriptor() { descriptor?.close(); descriptor = null }
 
     companion object {
-        const val RELATIVE_PATH = "${Environment.DIRECTORY_MOVIES}/Screen Recorder"
+        const val RELATIVE_PATH = "Movies/Screen Recorder"
         const val MIME_TYPE = "video/mp4"
 
         fun create(context: Context, epochMillis: Long, collisionSequence: Long): RecordingOutput {
