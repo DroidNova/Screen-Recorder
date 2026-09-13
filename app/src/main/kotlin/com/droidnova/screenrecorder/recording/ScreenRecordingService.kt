@@ -21,6 +21,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import com.droidnova.screenrecorder.MainActivity
 import com.droidnova.screenrecorder.R
@@ -42,6 +43,7 @@ import com.droidnova.screenrecorder.domain.recording.RecordingState
 import com.droidnova.screenrecorder.domain.recording.RecordingStateMachine
 import com.droidnova.screenrecorder.domain.recording.StopReason
 import com.droidnova.screenrecorder.domain.recording.TransitionResult
+import com.droidnova.screenrecorder.recording.overlay.RecordingOverlayController
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -59,6 +61,7 @@ data class RecordingRuntimeSnapshot(
     val state: RecordingState = RecordingState.Idle,
     val elapsedSeconds: Long = 0,
     val countdownRemainingSeconds: Int? = null,
+    val countdownOverlayVisible: Boolean = false,
     val recordingStartedAtNanos: Long? = null,
     val pauseStartedAtNanos: Long? = null,
     val accumulatedPausedNanos: Long = 0,
@@ -95,6 +98,7 @@ class ScreenRecordingService : Service() {
     private var activeStoragePolicy: StoragePolicy? = null
     private var currentSessionId = 0L
     private var countdownHandoff = CountDownLatch(1)
+    private lateinit var overlayController: RecordingOverlayController
     private val _runtime = MutableStateFlow(RecordingRuntimeSnapshot())
     private val runtime: StateFlow<RecordingRuntimeSnapshot> = _runtime.asStateFlow()
 
@@ -114,6 +118,7 @@ class ScreenRecordingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        overlayController = RecordingOverlayController(applicationContext)
         getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, mainHandler)
         encoderExecutor.execute {
             val outcome = runCatching { RecordingOutput.recover(this) }.getOrNull() ?: return@execute
@@ -155,6 +160,7 @@ class ScreenRecordingService : Service() {
         val encodedWidth = intent.getIntExtra(EXTRA_ENCODED_WIDTH, 0)
         val encodedHeight = intent.getIntExtra(EXTRA_ENCODED_HEIGHT, 0)
         val countdownSeconds = intent.getIntExtra(EXTRA_COUNTDOWN_SECONDS, -1)
+        val showCountdownOverlay = intent.getBooleanExtra(EXTRA_SHOW_COUNTDOWN_OVERLAY, false)
         if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0 ||
             audioMode == null || preset == null || shortEdge <= 0 || frameRate <= 0 || bitrate <= 0 || encodedWidth <= 0 || encodedHeight <= 0 ||
             countdownSeconds !in setOf(0, 3, 5, 15) ||
@@ -192,6 +198,7 @@ class ScreenRecordingService : Service() {
             runSession(
                 resultCode, consentData, width, height, densityDpi, requireNotNull(audioMode),
                 shortEdge, frameRate, bitrate, encodedWidth, encodedHeight,
+                showCountdownOverlay,
             )
         }
     }
@@ -212,6 +219,7 @@ class ScreenRecordingService : Service() {
         bitrate: Int,
         encodedWidth: Int,
         encodedHeight: Int,
+        showCountdownOverlay: Boolean,
     ) {
         try {
             val available = AvcCapabilityProvider.query(width, height)
@@ -228,7 +236,8 @@ class ScreenRecordingService : Service() {
                 throw RecordingPipelineException(RecordingFailure.UnsupportedCapability(validation.reason))
             }
             dispatch(RecordingEvent.PreparationReady)
-            if (!runCountdown()) {
+            val sessionId = currentSessionId
+            if (!runCountdown(showCountdownOverlay, sessionId)) {
                 completeWithoutCapture()
                 return
             }
@@ -276,7 +285,7 @@ class ScreenRecordingService : Service() {
         }
     }
 
-    private fun runCountdown(): Boolean {
+    private fun runCountdown(showCountdownOverlay: Boolean, sessionId: Long): Boolean {
         val state = _runtime.value.state as? RecordingState.Countdown ?: return false
         val seconds = (state.settings.countdown as? CountdownConfiguration.Duration)?.seconds ?: 0
         if (seconds == 0) {
@@ -289,6 +298,15 @@ class ScreenRecordingService : Service() {
             }
             return _runtime.value.state is RecordingState.Countdown
         }
+        val overlayAttached = showCountdownOverlay && Settings.canDrawOverlays(applicationContext) && overlayController.show(seconds)
+        if (overlayAttached) synchronized(transitionLock) {
+            if (currentSessionId == sessionId && _runtime.value.state is RecordingState.Countdown) {
+                _runtime.value = _runtime.value.copy(countdownOverlayVisible = true)
+            } else {
+                overlayController.remove()
+                return false
+            }
+        }
         val deadline = SystemClock.elapsedRealtime() + seconds * 1_000L
         var previous = -1
         while (_runtime.value.state is RecordingState.Countdown) {
@@ -296,8 +314,24 @@ class ScreenRecordingService : Service() {
             if (remaining.toInt() != previous) {
                 previous = remaining.toInt()
                 updateCountdown(previous)
+                if (overlayAttached && previous > 0) overlayController.update(previous)
             }
-            if (remaining == 0L) return true
+            if (remaining == 0L) {
+                if (overlayAttached) {
+                    overlayController.update(null)
+                    try {
+                        Thread.sleep(400)
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        requestStop(StopReason.ApplicationShutdown)
+                    }
+                    overlayController.removeAndAwaitFrame()
+                    synchronized(transitionLock) {
+                        _runtime.value = _runtime.value.copy(countdownOverlayVisible = false)
+                    }
+                }
+                return currentSessionId == sessionId && _runtime.value.state is RecordingState.Countdown
+            }
             try {
                 Thread.sleep(minOf(200L, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(1)))
             } catch (_: InterruptedException) {
@@ -320,6 +354,7 @@ class ScreenRecordingService : Service() {
     }
 
     private fun completeWithoutCapture() {
+        removeCountdownOverlay()
         if (!cleanupStarted.compareAndSet(false, true)) return
         dispatch(RecordingEvent.FinalizationSucceeded)
         finishService()
@@ -328,6 +363,7 @@ class ScreenRecordingService : Service() {
     private fun requestStop(reason: StopReason): Boolean {
         val accepted = dispatch(RecordingCommand.Stop(reason)) is TransitionResult.Accepted
         if (accepted) {
+            removeCountdownOverlay()
             countdownHandoff.countDown()
             pipeline?.requestStop()
         }
@@ -442,14 +478,25 @@ class ScreenRecordingService : Service() {
     }
 
     private fun terminalFailure(failure: RecordingFailure) {
+        removeCountdownOverlay()
         dispatch(RecordingEvent.FatalFailure(failure))
         finishService()
     }
 
     private fun finishService() {
+        removeCountdownOverlay()
         mainHandler.removeCallbacks(elapsedUpdater)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun removeCountdownOverlay() {
+        overlayController.remove()
+        synchronized(transitionLock) {
+            if (_runtime.value.countdownOverlayVisible) {
+                _runtime.value = _runtime.value.copy(countdownOverlayVisible = false)
+            }
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -477,6 +524,7 @@ class ScreenRecordingService : Service() {
                     state = result.newState,
                     elapsedSeconds = elapsed,
                     countdownRemainingSeconds = null,
+                    countdownOverlayVisible = if (result.newState is RecordingState.Countdown) current.countdownOverlayVisible else false,
                     recordingStartedAtNanos = if (result.newState is RecordingState.Preparing) null else current.recordingStartedAtNanos,
                     pauseStartedAtNanos = if (result.newState is RecordingState.Preparing) null else current.pauseStartedAtNanos,
                     accumulatedPausedNanos = if (result.newState is RecordingState.Preparing) 0 else current.accumulatedPausedNanos,
@@ -493,6 +541,7 @@ class ScreenRecordingService : Service() {
             state = RecordingState.Idle,
             elapsedSeconds = 0,
             countdownRemainingSeconds = null,
+            countdownOverlayVisible = false,
             recordingStartedAtNanos = null,
             pauseStartedAtNanos = null,
             accumulatedPausedNanos = 0,
@@ -609,6 +658,7 @@ class ScreenRecordingService : Service() {
     }
 
     override fun onDestroy() {
+        removeCountdownOverlay()
         getSystemService(DisplayManager::class.java).unregisterDisplayListener(displayListener)
         mainHandler.removeCallbacks(elapsedUpdater)
         if (!cleanupStarted.get()) {
@@ -639,6 +689,7 @@ class ScreenRecordingService : Service() {
         private const val EXTRA_ENCODED_WIDTH = "encoded_width"
         private const val EXTRA_ENCODED_HEIGHT = "encoded_height"
         private const val EXTRA_COUNTDOWN_SECONDS = "countdown_seconds"
+        private const val EXTRA_SHOW_COUNTDOWN_OVERLAY = "show_countdown_overlay"
         private const val CHANNEL_ID = "screen_recording"
         private const val NOTIFICATION_ID = 41
         private const val STOP_REQUEST_CODE = 1
@@ -658,6 +709,7 @@ class ScreenRecordingService : Service() {
             densityDpi: Int,
             settings: RecordingSettings,
             shortEdge: Int,
+            showCountdownOverlay: Boolean,
         ) =
             Intent(context, ScreenRecordingService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode).putExtra(EXTRA_CONSENT_DATA, data)
@@ -670,6 +722,7 @@ class ScreenRecordingService : Service() {
                 .putExtra(EXTRA_ENCODED_WIDTH, settings.resolution.width)
                 .putExtra(EXTRA_ENCODED_HEIGHT, settings.resolution.height)
                 .putExtra(EXTRA_COUNTDOWN_SECONDS, (settings.countdown as? CountdownConfiguration.Duration)?.seconds ?: 0)
+                .putExtra(EXTRA_SHOW_COUNTDOWN_OVERLAY, showCountdownOverlay)
 
         fun stopIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_STOP)
         fun pauseIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_PAUSE)

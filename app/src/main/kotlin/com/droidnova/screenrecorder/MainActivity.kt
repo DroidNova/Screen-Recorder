@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -53,6 +54,8 @@ class MainActivity : ComponentActivity() {
     private var pendingStartStep = mutableStateOf<StartStep?>(null)
     private var pendingVideo: AvailableVideoConfiguration? = null
     private var pendingCountdown = 0
+    private var pendingShowCountdownOverlay = false
+    private var overlayPermissionRequestPending = false
     private lateinit var preferencesRepository: RecordingPreferencesRepository
     private var preferences = RecordingPreferences()
     private var projectionConsentPending = false
@@ -67,6 +70,7 @@ class MainActivity : ComponentActivity() {
     private val availableVideoConfigurations = MutableStateFlow<List<AvailableVideoConfiguration>>(emptyList())
     private val selectedVideoConfiguration = MutableStateFlow<AvailableVideoConfiguration?>(null)
     private val countdownSeconds = MutableStateFlow(0)
+    private val onScreenToolsEnabled = MutableStateFlow(false)
     private val statusMessage = mutableStateOf<Int?>(null)
     private val recordingRuntime = mutableStateOf(RecordingRuntimeSnapshot())
     private var serviceBinder: ScreenRecordingService.LocalBinder? = null
@@ -141,6 +145,7 @@ class MainActivity : ComponentActivity() {
             configuration.densityDpi,
             settings,
             video.shortEdge,
+            pendingShowCountdownOverlay,
         )
         try {
             pendingStartStep.value = StartStep.Starting
@@ -159,6 +164,8 @@ class MainActivity : ComponentActivity() {
             ?.takeUnless { it == StartStep.Validating }
         requestedSessionAudioMode = savedInstanceState?.getString(STATE_REQUESTED_AUDIO_MODE)?.toAudioMode() ?: AudioMode.None
         pendingCountdown = savedInstanceState?.getInt(STATE_PENDING_COUNTDOWN) ?: 0
+        pendingShowCountdownOverlay = savedInstanceState?.getBoolean(STATE_PENDING_COUNTDOWN_OVERLAY) == true
+        overlayPermissionRequestPending = savedInstanceState?.getBoolean(STATE_OVERLAY_PERMISSION_PENDING) == true
         val pendingShortEdge = savedInstanceState?.getInt(STATE_PENDING_SHORT_EDGE) ?: 0
         val pendingFps = savedInstanceState?.getInt(STATE_PENDING_FPS) ?: 0
         val pendingBitrate = savedInstanceState?.getInt(STATE_PENDING_BITRATE) ?: 0
@@ -167,6 +174,11 @@ class MainActivity : ComponentActivity() {
                 preferences = stored
                 _selectedAudioMode.value = stored.audioMode
                 countdownSeconds.value = stored.countdownSeconds
+                val effectiveTools = stored.onScreenToolsEnabled && Settings.canDrawOverlays(this@MainActivity)
+                onScreenToolsEnabled.value = effectiveTools
+                if (stored.onScreenToolsEnabled && !effectiveTools && !overlayPermissionRequestPending) {
+                    preferencesRepository.saveOnScreenToolsEnabled(false)
+                }
                 val options = availableVideoConfigurations.value
                 if (options.isNotEmpty()) selectedVideoConfiguration.value = resolvePreference(options, stored)
             }
@@ -197,6 +209,7 @@ class MainActivity : ComponentActivity() {
                 videoOptions.any { it.sameEncodingAs(selected) }
             } == true
             val countdown by countdownSeconds.collectAsState()
+            val toolsEnabled by onScreenToolsEnabled.collectAsState()
             val adsState by adsController.state.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
@@ -231,6 +244,8 @@ class MainActivity : ComponentActivity() {
                 onVideoSelected = { lifecycleScope.launch { preferencesRepository.saveVideo(it) } },
                 countdownSeconds = countdown,
                 onCountdownSelected = { lifecycleScope.launch { preferencesRepository.saveCountdown(it) } },
+                onScreenToolsEnabled = toolsEnabled,
+                onScreenToolsChanged = ::setOnScreenToolsEnabled,
                 onResetSettings = { lifecycleScope.launch { preferencesRepository.reset() } },
                 startFlowInProgress = pendingStartStep.value != null,
                 adsConfigured = adsState.configured,
@@ -260,6 +275,8 @@ class MainActivity : ComponentActivity() {
         outState.putString(STATE_REQUESTED_AUDIO_MODE, requestedSessionAudioMode.name)
         outState.putString(STATE_PENDING_START_STEP, pendingStartStep.value?.name)
         outState.putInt(STATE_PENDING_COUNTDOWN, pendingCountdown)
+        outState.putBoolean(STATE_PENDING_COUNTDOWN_OVERLAY, pendingShowCountdownOverlay)
+        outState.putBoolean(STATE_OVERLAY_PERMISSION_PENDING, overlayPermissionRequestPending)
         pendingVideo?.let {
             outState.putInt(STATE_PENDING_SHORT_EDGE, it.shortEdge); outState.putInt(STATE_PENDING_FPS, it.frameRate.framesPerSecond)
             outState.putInt(STATE_PENDING_BITRATE, it.bitrate.bitsPerSecond)
@@ -270,6 +287,18 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         serviceBound = bindService(Intent(this, ScreenRecordingService::class.java), serviceConnection, BIND_AUTO_CREATE)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (overlayPermissionRequestPending) {
+            overlayPermissionRequestPending = false
+            lifecycleScope.launch {
+                preferencesRepository.saveOnScreenToolsEnabled(Settings.canDrawOverlays(this@MainActivity))
+            }
+        } else if (preferences.onScreenToolsEnabled && !Settings.canDrawOverlays(this)) {
+            lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(false) }
+        }
     }
 
     override fun onStop() {
@@ -315,6 +344,7 @@ class MainActivity : ComponentActivity() {
             }
             pendingVideo = selectedVideo
             pendingCountdown = countdownSeconds.value
+            pendingShowCountdownOverlay = preferences.onScreenToolsEnabled && pendingCountdown > 0 && Settings.canDrawOverlays(this@MainActivity)
             continueNotificationPermission()
         }
     }
@@ -364,6 +394,10 @@ class MainActivity : ComponentActivity() {
         recordingRuntime.value = snapshot
         if (snapshot.state is RecordingState.Countdown) {
             serviceBinder?.acknowledgeBackgrounded()
+            if (snapshot.countdownOverlayVisible && pendingStartStep.value == StartStep.Starting) {
+                clearPendingStart()
+                moveTaskToBack(true)
+            }
         } else if (snapshot.state is RecordingState.Recording && pendingStartStep.value == StartStep.Starting) {
             clearPendingStart()
             moveTaskToBack(true)
@@ -377,8 +411,34 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun clearPendingStart() {
-        pendingStartStep.value = null; pendingVideo = null; pendingCountdown = 0
+        pendingStartStep.value = null; pendingVideo = null; pendingCountdown = 0; pendingShowCountdownOverlay = false
         projectionConsentPending = false; notificationPermissionPending = false; microphonePermissionPending = false
+    }
+
+    private fun setOnScreenToolsEnabled(enabled: Boolean) {
+        if (!enabled) {
+            overlayPermissionRequestPending = false
+            lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(false) }
+            return
+        }
+        if (Settings.canDrawOverlays(this)) {
+            lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(true) }
+            return
+        }
+        overlayPermissionRequestPending = true
+        lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(true) }
+        val packageSettingsOpened = try {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+        if (!packageSettingsOpened) try {
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION))
+        } catch (_: RuntimeException) {
+            overlayPermissionRequestPending = false
+            lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(false) }
+        }
     }
 
     private fun openApplicationSettingsForPending() {
@@ -423,6 +483,8 @@ class MainActivity : ComponentActivity() {
         const val STATE_VIDEO_BITRATE = "video_bitrate"
         const val STATE_PENDING_START_STEP = "pending_start_step"
         const val STATE_PENDING_COUNTDOWN = "pending_countdown"
+        const val STATE_PENDING_COUNTDOWN_OVERLAY = "pending_countdown_overlay"
+        const val STATE_OVERLAY_PERMISSION_PENDING = "overlay_permission_pending"
         const val STATE_PENDING_SHORT_EDGE = "pending_short_edge"
         const val STATE_PENDING_FPS = "pending_fps"
         const val STATE_PENDING_BITRATE = "pending_bitrate"

@@ -11,6 +11,7 @@ import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -192,21 +193,71 @@ internal object RecordingThumbnailCache {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
 
-    @Synchronized fun get(uri: Uri): Bitmap? = cache.get(uri.toString())
-    @Synchronized fun put(uri: Uri, bitmap: Bitmap) = cache.put(uri.toString(), bitmap)
-    @Synchronized fun remove(uri: Uri) = cache.remove(uri.toString())
+    @Synchronized fun get(uri: Uri, modifiedSeconds: Long, targetPx: Int): Bitmap? =
+        cache.get(cacheKey(uri, modifiedSeconds, targetPx))
 
-    fun load(context: Context, uri: Uri, cancellation: CancellationSignal): Bitmap? {
-        get(uri)?.let { return it }
-        val bitmap = runCatching {
+    @Synchronized private fun put(uri: Uri, modifiedSeconds: Long, targetPx: Int, bitmap: Bitmap) =
+        cache.put(cacheKey(uri, modifiedSeconds, targetPx), bitmap)
+
+    @Synchronized fun remove(uri: Uri) {
+        val prefix = "${uri}#"
+        cache.snapshot().keys.filter { it.startsWith(prefix) }.forEach(cache::remove)
+    }
+
+    fun load(context: Context, item: LibraryRecording, targetPx: Int, cancellation: CancellationSignal): Bitmap? {
+        get(item.contentUri, item.modifiedSeconds, targetPx)?.let { return it }
+        val bitmap = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                context.contentResolver.loadThumbnail(uri, Size(320, 180), cancellation)
+                context.contentResolver.loadThumbnail(item.contentUri, Size(targetPx, targetPx), cancellation)
             } else {
                 val retriever = MediaMetadataRetriever()
-                try { retriever.setDataSource(context, uri); retriever.frameAtTime } finally { retriever.release() }
+                try {
+                    retriever.setDataSource(context, item.contentUri)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        val requested = scaledFrameSize(item.width, item.height, targetPx)
+                        retriever.getScaledFrameAtTime(
+                            REPRESENTATIVE_FRAME_US,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                            requested.width,
+                            requested.height,
+                        )
+                    } else {
+                        retriever.getFrameAtTime(REPRESENTATIVE_FRAME_US, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)?.let { frame ->
+                            val requested = scaledFrameSize(frame.width.toLong(), frame.height.toLong(), targetPx)
+                            Bitmap.createScaledBitmap(frame, requested.width, requested.height, true)
+                        }
+                    }
+                } finally {
+                    retriever.release()
+                }
             }
-        }.getOrNull()
-        if (bitmap != null) put(uri, bitmap)
+        } catch (cancellationException: OperationCanceledException) {
+            return null
+        } catch (_: java.io.IOException) {
+            null
+        } catch (_: SecurityException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: RuntimeException) {
+            null
+        }
+        if (bitmap != null && !cancellation.isCanceled) put(item.contentUri, item.modifiedSeconds, targetPx, bitmap)
         return bitmap
     }
+
+    private fun cacheKey(uri: Uri, modifiedSeconds: Long, targetPx: Int) = "$uri#$modifiedSeconds#$targetPx"
+
+    private fun scaledFrameSize(sourceWidth: Long, sourceHeight: Long, targetPx: Int): Size {
+        val width = sourceWidth.coerceAtLeast(1L)
+        val height = sourceHeight.coerceAtLeast(1L)
+        return if (width >= height) {
+            Size((targetPx.toLong() * width / height).coerceAtMost(MAX_THUMBNAIL_PX.toLong()).toInt(), targetPx)
+        } else {
+            Size(targetPx, (targetPx.toLong() * height / width).coerceAtMost(MAX_THUMBNAIL_PX.toLong()).toInt())
+        }
+    }
+
+    private const val REPRESENTATIVE_FRAME_US = 1_000_000L
+    private const val MAX_THUMBNAIL_PX = 512
 }
