@@ -26,6 +26,7 @@ data class RecordingPreferences(
     val countdownSeconds: Int = 0,
     val notificationRequestedBefore: Boolean = false,
     val audioRequestedBefore: Boolean = false,
+    val onScreenToolsEnabled: Boolean = false,
 )
 
 class RecordingPreferencesRepository(context: Context) {
@@ -40,6 +41,7 @@ class RecordingPreferencesRepository(context: Context) {
             countdownSeconds = values[COUNTDOWN]?.takeIf { it in setOf(0, 3, 5, 15) } ?: 0,
             notificationRequestedBefore = values[NOTIFICATION_REQUESTED] ?: false,
             audioRequestedBefore = values[AUDIO_REQUESTED] ?: false,
+            onScreenToolsEnabled = values[ON_SCREEN_TOOLS] ?: false,
         )
     }.distinctUntilChanged()
 
@@ -54,6 +56,7 @@ class RecordingPreferencesRepository(context: Context) {
     suspend fun saveCountdown(seconds: Int) = dataStore.edit { it[COUNTDOWN] = seconds }
     suspend fun markNotificationRequested() = dataStore.edit { it[NOTIFICATION_REQUESTED] = true }
     suspend fun markAudioRequested() = dataStore.edit { it[AUDIO_REQUESTED] = true }
+    suspend fun saveOnScreenToolsEnabled(enabled: Boolean) = dataStore.edit { it[ON_SCREEN_TOOLS] = enabled }
     suspend fun reset() = dataStore.edit {
         it.remove(PRESET); it.remove(SHORT_EDGE); it.remove(FPS); it.remove(BITRATE); it.remove(AUDIO); it.remove(COUNTDOWN)
     }
@@ -67,6 +70,7 @@ class RecordingPreferencesRepository(context: Context) {
         val COUNTDOWN = intPreferencesKey("countdown_seconds")
         val NOTIFICATION_REQUESTED = booleanPreferencesKey("notification_permission_requested_before")
         val AUDIO_REQUESTED = booleanPreferencesKey("record_audio_permission_requested_before")
+        val ON_SCREEN_TOOLS = booleanPreferencesKey("on_screen_tools_enabled")
     }
 }
 

@@ -76,6 +76,10 @@
     <string name="recording_defaults">Recording defaults</string>
     <string name="permissions">Permissions</string>
     <string name="screen_capture_settings_detail">Android asks before every recording.</string>
+    <string name="on_screen_tools">On-screen tools</string>
+    <string name="on_screen_tools_supporting">Show the recording countdown over other apps</string>
+    <string name="recording_countdown_accessibility">Recording starts in %1$d seconds</string>
+    <string name="recording_started_accessibility">Recording started</string>
     <string name="not_allowed">Not allowed</string>
     <string name="not_required_audio">Not required for current audio mode</string>
     <string name="recording_location">Recording location</string>

@@ -34,6 +34,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -68,6 +69,8 @@ fun SettingsScreen(
     deviceAudioAvailable: Boolean = true,
     countdownSeconds: Int = 0,
     onCountdownSelected: (Int) -> Unit = {},
+    onScreenToolsEnabled: Boolean = false,
+    onOnScreenToolsChanged: (Boolean) -> Unit = {},
     onAudioModeSelected: (AudioMode) -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
     selectedVideo: AvailableVideoConfiguration? = null,
@@ -117,6 +120,13 @@ fun SettingsScreen(
                 CompactSettingsRow(R.string.audio_microphone, if (microphoneAllowed) R.string.permission_allowed else R.string.not_allowed, onClick = onApplicationSettings)
                 DividerRow()
                 CompactSettingsRow(R.string.screen_capture_permission, summary = stringResource(R.string.screen_capture_settings_detail))
+                DividerRow()
+                CompactSwitchRow(
+                    title = R.string.on_screen_tools,
+                    summary = R.string.on_screen_tools_supporting,
+                    checked = onScreenToolsEnabled,
+                    onCheckedChange = onOnScreenToolsChanged,
+                )
             }
         }
         item {
@@ -152,6 +162,25 @@ fun SettingsScreen(
         text = { Text(stringResource(R.string.reset_recording_settings_detail)) },
         confirmButton = { TextButton({ showReset = false; onReset() }) { Text(stringResource(R.string.reset)) } },
         dismissButton = { TextButton({ showReset = false }) { Text(stringResource(R.string.cancel)) } })
+}
+
+@Composable
+private fun CompactSwitchRow(
+    title: Int,
+    summary: Int,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 68.dp).padding(horizontal = 16.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(title))
+            Text(stringResource(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
 }
 
 @Composable
