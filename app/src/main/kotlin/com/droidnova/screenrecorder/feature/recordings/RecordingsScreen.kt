@@ -26,10 +26,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
@@ -57,8 +56,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -249,33 +250,39 @@ fun RecordingsScreen(
     androidx.compose.material3.Card(
         shape = RoundedCornerShape(18.dp),
         colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        modifier = Modifier.fillMaxWidth().heightIn(min = 92.dp).clickable(onClickLabel = stringResource(R.string.play_recording)) {
+        modifier = Modifier.fillMaxWidth().height(THUMBNAIL_SIZE).clickable(onClickLabel = stringResource(R.string.play_recording)) {
         if (!launching) {
             launching = true
             play()
             scope.launch { delay(750); launching = false }
         }
     }) {
-        Row(Modifier.padding(Spacing.Small), verticalAlignment = Alignment.CenterVertically) {
-            Thumbnail(item, Modifier.width(124.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(12.dp)))
-            Column(Modifier.weight(1f).padding(start = Spacing.Component), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(item.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
-                Text(DateFormat.getMediumDateFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)) + " · " +
-                    DateFormat.getTimeFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(Formatter.formatFileSize(LocalContext.current, item.sizeBytes), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Box {
-                val actionsDescription = stringResource(R.string.recording_actions, item.displayName)
-                IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp).semantics { contentDescription = actionsDescription }) {
-                    Text("⋮", style = MaterialTheme.typography.headlineSmall)
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            Thumbnail(
+                item,
+                Modifier.size(THUMBNAIL_SIZE).aspectRatio(1f)
+                    .clip(RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)),
+            )
+            Row(Modifier.weight(1f).fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(item.displayName, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium)
+                    Text(DateFormat.getMediumDateFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)) + " · " +
+                        DateFormat.getTimeFormat(LocalContext.current).format(Date(item.modifiedSeconds * 1000L)), maxLines = 1,
+                        overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(formatDuration(item.durationMillis) + " · " + Formatter.formatFileSize(LocalContext.current, item.sizeBytes),
+                        maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text(stringResource(R.string.play)) }, { menu = false; play() })
-                    DropdownMenuItem({ Text(stringResource(R.string.rename)) }, { menu = false; rename() })
-                    DropdownMenuItem({ Text(stringResource(R.string.share)) }, { menu = false; share() })
-                    DropdownMenuItem({ Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }, { menu = false; delete() })
+                Box {
+                    val actionsDescription = stringResource(R.string.recording_actions, item.displayName)
+                    IconButton(onClick = { menu = true }, modifier = Modifier.size(48.dp).semantics { contentDescription = actionsDescription }) {
+                        Text("⋮", style = MaterialTheme.typography.headlineSmall)
+                    }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem({ Text(stringResource(R.string.play)) }, { menu = false; play() })
+                        DropdownMenuItem({ Text(stringResource(R.string.rename)) }, { menu = false; rename() })
+                        DropdownMenuItem({ Text(stringResource(R.string.share)) }, { menu = false; share() })
+                        DropdownMenuItem({ Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }, { menu = false; delete() })
+                    }
                 }
             }
         }
@@ -284,18 +291,22 @@ fun RecordingsScreen(
 
 @Composable private fun Thumbnail(item: LibraryRecording, modifier: Modifier) {
     val context = LocalContext.current
-    var bitmap by remember(item.contentUri) { mutableStateOf(RecordingThumbnailCache.get(item.contentUri)) }
-    DisposableEffect(item.contentUri) {
+    val targetPx = with(LocalDensity.current) { THUMBNAIL_SIZE.roundToPx() }.coerceIn(256, 512)
+    var bitmap by remember(item.contentUri, item.modifiedSeconds, targetPx) {
+        mutableStateOf(RecordingThumbnailCache.get(item.contentUri, item.modifiedSeconds, targetPx))
+    }
+    DisposableEffect(item.contentUri, item.modifiedSeconds, targetPx) {
         val signal = CancellationSignal()
         val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch {
-            bitmap = withContext(Dispatchers.IO) { RecordingThumbnailCache.load(context.applicationContext, item.contentUri, signal) }
+            bitmap = withContext(Dispatchers.IO) { RecordingThumbnailCache.load(context.applicationContext, item, targetPx, signal) }
         }
         onDispose { signal.cancel(); job.cancel() }
     }
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-        bitmap?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop) }
+        bitmap?.let {
+            Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, filterQuality = FilterQuality.Medium)
+        }
             ?: Icon(painterResource(R.drawable.ic_recordings_outline), null)
-        Text(formatDuration(item.durationMillis), Modifier.align(Alignment.BottomEnd).background(MaterialTheme.colorScheme.scrim.copy(alpha = .75f)).padding(4.dp), color = MaterialTheme.colorScheme.onBackground)
     }
 }
 
@@ -328,6 +339,7 @@ private fun formatDuration(milliseconds: Long): String {
 
 private const val MP4_EXTENSION = ".mp4"
 private const val MAX_RECORDING_NAME_LENGTH = 80
+private val THUMBNAIL_SIZE = 96.dp
 private val REPEATED_MP4_EXTENSION = Regex("(?i)(\\.mp4)+$")
 
 private fun removeMp4Extension(name: String): String = name.replace(Regex("(?i)\\.mp4$"), "")
