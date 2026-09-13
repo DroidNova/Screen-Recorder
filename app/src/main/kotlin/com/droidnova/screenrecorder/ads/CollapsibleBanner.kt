@@ -15,7 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.LifecycleOwner
 import androidx.compose.ui.unit.Dp
@@ -91,7 +91,7 @@ internal fun CollapsibleBanner(
     }
 
     if (eligible) {
-        Box(modifier.fillMaxWidth().height(reservedHeight).background(Color.Black), contentAlignment = Alignment.Center) {
+        Box(modifier.fillMaxWidth().height(reservedHeight).background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.Center) {
             AndroidView(
                 factory = {
                     (adView.parent as? ViewGroup)?.removeView(adView)

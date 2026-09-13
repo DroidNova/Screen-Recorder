@@ -40,6 +40,8 @@ import com.droidnova.screenrecorder.recording.StorageCheck
 import com.droidnova.screenrecorder.recording.RecordingPreferences
 import com.droidnova.screenrecorder.recording.RecordingPreferencesRepository
 import com.droidnova.screenrecorder.ui.ScreenRecorderApp
+import com.droidnova.screenrecorder.ui.theme.AppColorTheme
+import com.droidnova.screenrecorder.ui.theme.AppThemeMode
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -71,6 +73,9 @@ class MainActivity : ComponentActivity() {
     private val selectedVideoConfiguration = MutableStateFlow<AvailableVideoConfiguration?>(null)
     private val countdownSeconds = MutableStateFlow(0)
     private val onScreenToolsEnabled = MutableStateFlow(false)
+    private val overlayAccessGranted = MutableStateFlow(false)
+    private val themeMode = MutableStateFlow(AppThemeMode.SYSTEM)
+    private val colorTheme = MutableStateFlow(AppColorTheme.MINT)
     private val statusMessage = mutableStateOf<Int?>(null)
     private val recordingRuntime = mutableStateOf(RecordingRuntimeSnapshot())
     private var serviceBinder: ScreenRecordingService.LocalBinder? = null
@@ -159,6 +164,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferencesRepository = RecordingPreferencesRepository(this)
+        overlayAccessGranted.value = Settings.canDrawOverlays(this)
         pendingStartStep.value = savedInstanceState?.getString(STATE_PENDING_START_STEP)
             ?.let { runCatching { StartStep.valueOf(it) }.getOrNull() }
             ?.takeUnless { it == StartStep.Validating }
@@ -174,6 +180,8 @@ class MainActivity : ComponentActivity() {
                 preferences = stored
                 _selectedAudioMode.value = stored.audioMode
                 countdownSeconds.value = stored.countdownSeconds
+                themeMode.value = stored.themeMode
+                colorTheme.value = stored.colorTheme
                 val effectiveTools = stored.onScreenToolsEnabled && Settings.canDrawOverlays(this@MainActivity)
                 onScreenToolsEnabled.value = effectiveTools
                 if (stored.onScreenToolsEnabled && !effectiveTools && !overlayPermissionRequestPending) {
@@ -210,6 +218,9 @@ class MainActivity : ComponentActivity() {
             } == true
             val countdown by countdownSeconds.collectAsState()
             val toolsEnabled by onScreenToolsEnabled.collectAsState()
+            val overlayAllowed by overlayAccessGranted.collectAsState()
+            val selectedThemeMode by themeMode.collectAsState()
+            val selectedColorTheme by colorTheme.collectAsState()
             val adsState by adsController.state.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
@@ -246,6 +257,12 @@ class MainActivity : ComponentActivity() {
                 onCountdownSelected = { lifecycleScope.launch { preferencesRepository.saveCountdown(it) } },
                 onScreenToolsEnabled = toolsEnabled,
                 onScreenToolsChanged = ::setOnScreenToolsEnabled,
+                canDrawOverlays = overlayAllowed,
+                onOverlayPermissionRequest = ::requestOverlayPermission,
+                themeMode = selectedThemeMode,
+                colorTheme = selectedColorTheme,
+                onThemeModeSelected = { lifecycleScope.launch { preferencesRepository.saveThemeMode(it) } },
+                onColorThemeSelected = { lifecycleScope.launch { preferencesRepository.saveColorTheme(it) } },
                 onResetSettings = { lifecycleScope.launch { preferencesRepository.reset() } },
                 startFlowInProgress = pendingStartStep.value != null,
                 adsConfigured = adsState.configured,
@@ -291,6 +308,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        overlayAccessGranted.value = Settings.canDrawOverlays(this)
         if (overlayPermissionRequestPending) {
             overlayPermissionRequestPending = false
             lifecycleScope.launch {
@@ -425,8 +443,14 @@ class MainActivity : ComponentActivity() {
             lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(true) }
             return
         }
+    }
+
+    private fun requestOverlayPermission() {
+        if (Settings.canDrawOverlays(this)) {
+            lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(true) }
+            return
+        }
         overlayPermissionRequestPending = true
-        lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(true) }
         val packageSettingsOpened = try {
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
             true
