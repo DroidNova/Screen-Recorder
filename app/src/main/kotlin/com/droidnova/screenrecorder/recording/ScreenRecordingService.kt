@@ -85,6 +85,12 @@ class ScreenRecordingService : Service() {
             }
         }
         fun acknowledgeBackgrounded() { countdownHandoff.countDown() }
+        fun disableOnScreenTools() {
+            showCountdownOverlay = false
+            showFloatingRecordingControls = false
+            overlayController.remove()
+            setOverlayVisible(false)
+        }
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -99,7 +105,8 @@ class ScreenRecordingService : Service() {
     private var currentSessionId = 0L
     private var countdownHandoff = CountDownLatch(1)
     private lateinit var overlayController: RecordingOverlayController
-    private var showCountdownOverlay = false
+    @Volatile private var showCountdownOverlay = false
+    @Volatile private var showFloatingRecordingControls = false
     private val _runtime = MutableStateFlow(RecordingRuntimeSnapshot())
     private val runtime: StateFlow<RecordingRuntimeSnapshot> = _runtime.asStateFlow()
 
@@ -114,6 +121,11 @@ class ScreenRecordingService : Service() {
         override fun onDisplayRemoved(displayId: Int) = Unit
         override fun onDisplayChanged(displayId: Int) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) updateLegacyDisplaySize()
+            val state = _runtime.value.state
+            overlayController.onDisplayChanged(
+                currentSessionId,
+                showFloatingRecordingControls && (state is RecordingState.Recording || state is RecordingState.Paused),
+            )
         }
     }
 
@@ -161,7 +173,7 @@ class ScreenRecordingService : Service() {
         val encodedWidth = intent.getIntExtra(EXTRA_ENCODED_WIDTH, 0)
         val encodedHeight = intent.getIntExtra(EXTRA_ENCODED_HEIGHT, 0)
         val countdownSeconds = intent.getIntExtra(EXTRA_COUNTDOWN_SECONDS, -1)
-        val overlayRequested = intent.getBooleanExtra(EXTRA_SHOW_COUNTDOWN_OVERLAY, false)
+        val overlayRequested = intent.getBooleanExtra(EXTRA_SHOW_ON_SCREEN_TOOLS, false)
         if (consentData == null || resultCode == Int.MIN_VALUE || width <= 0 || height <= 0 || densityDpi <= 0 ||
             audioMode == null || preset == null || shortEdge <= 0 || frameRate <= 0 || bitrate <= 0 || encodedWidth <= 0 || encodedHeight <= 0 ||
             countdownSeconds !in setOf(0, 3, 5, 15) ||
@@ -175,6 +187,7 @@ class ScreenRecordingService : Service() {
             cleanupStarted.set(false)
             currentSessionId = sessionSequence.incrementAndGet()
             showCountdownOverlay = overlayRequested && countdownSeconds > 0
+            showFloatingRecordingControls = overlayRequested
             countdownHandoff = CountDownLatch(1)
             val requestedSettings = Milestone5Settings.default.copy(
                 preset = requireNotNull(preset),
@@ -274,6 +287,9 @@ class ScreenRecordingService : Service() {
                 }
             }
             mainHandler.post(elapsedUpdater)
+            if (_runtime.value.state is RecordingState.Recording) {
+                showFloatingControls(currentSessionId, paused = false)
+            }
             startStorageMonitor()
             finalizeSession(ownedPipeline, ownedPipeline.drainUntilStopped(), null)
         } catch (error: RecordingPipelineException) {
@@ -402,6 +418,7 @@ class ScreenRecordingService : Service() {
             val updated = _runtime.value.copy(pauseStartedAtNanos = now)
             _runtime.value = updated.copy(elapsedSeconds = activeElapsedSeconds(updated, now))
         }
+        if (result is TransitionResult.Accepted) overlayController.updateControls(currentSessionId, paused = true)
         return result is TransitionResult.Accepted
     }
 
@@ -427,7 +444,19 @@ class ScreenRecordingService : Service() {
             mainHandler.removeCallbacks(elapsedUpdater)
             mainHandler.post(elapsedUpdater)
         }
+        if (result is TransitionResult.Accepted) overlayController.updateControls(currentSessionId, paused = false)
         return result is TransitionResult.Accepted
+    }
+
+    private fun showFloatingControls(sessionId: Long, paused: Boolean) {
+        if (!showFloatingRecordingControls || !Settings.canDrawOverlays(applicationContext)) return
+        overlayController.showControls(
+            sessionId = sessionId,
+            paused = paused,
+            pause = { id -> id == currentSessionId && requestPause() },
+            resume = { id -> id == currentSessionId && requestResume() },
+            stop = { id -> id == currentSessionId && requestStop(StopReason.UserRequested) },
+        )
     }
 
     private fun finalizeSession(
@@ -682,7 +711,7 @@ class ScreenRecordingService : Service() {
         private const val EXTRA_ENCODED_WIDTH = "encoded_width"
         private const val EXTRA_ENCODED_HEIGHT = "encoded_height"
         private const val EXTRA_COUNTDOWN_SECONDS = "countdown_seconds"
-        private const val EXTRA_SHOW_COUNTDOWN_OVERLAY = "show_countdown_overlay"
+        private const val EXTRA_SHOW_ON_SCREEN_TOOLS = "show_on_screen_tools"
         private const val CHANNEL_ID = "screen_recording"
         private const val NOTIFICATION_ID = 41
         private const val STOP_REQUEST_CODE = 1
@@ -702,7 +731,7 @@ class ScreenRecordingService : Service() {
             densityDpi: Int,
             settings: RecordingSettings,
             shortEdge: Int,
-            showCountdownOverlay: Boolean,
+            showOnScreenTools: Boolean,
         ) =
             Intent(context, ScreenRecordingService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_RESULT_CODE, resultCode).putExtra(EXTRA_CONSENT_DATA, data)
@@ -715,7 +744,7 @@ class ScreenRecordingService : Service() {
                 .putExtra(EXTRA_ENCODED_WIDTH, settings.resolution.width)
                 .putExtra(EXTRA_ENCODED_HEIGHT, settings.resolution.height)
                 .putExtra(EXTRA_COUNTDOWN_SECONDS, (settings.countdown as? CountdownConfiguration.Duration)?.seconds ?: 0)
-                .putExtra(EXTRA_SHOW_COUNTDOWN_OVERLAY, showCountdownOverlay)
+                .putExtra(EXTRA_SHOW_ON_SCREEN_TOOLS, showOnScreenTools)
 
         fun stopIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_STOP)
         fun pauseIntent(context: Context) = Intent(context, ScreenRecordingService::class.java).setAction(ACTION_PAUSE)

@@ -144,7 +144,7 @@ class MainActivity : ComponentActivity() {
             configuration.densityDpi,
             settings,
             video.shortEdge,
-            preferences.onScreenToolsEnabled && pendingCountdown > 0 && Settings.canDrawOverlays(applicationContext),
+            preferences.onScreenToolsEnabled && Settings.canDrawOverlays(applicationContext),
         )
         try {
             pendingStartStep.value = StartStep.Starting
@@ -405,6 +405,7 @@ class MainActivity : ComponentActivity() {
     private fun changeOnScreenTools(enabled: Boolean) {
         if (!enabled) {
             overlayPermissionPending = false
+            serviceBinder?.disableOnScreenTools()
             lifecycleScope.launch { preferencesRepository.saveOnScreenToolsEnabled(false) }
             return
         }
