@@ -30,7 +30,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -41,6 +40,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.droidnova.screenrecorder.feature.settings.SettingsScreen
+import com.droidnova.screenrecorder.feature.settings.AppearanceScreen
 import com.droidnova.screenrecorder.feature.recordings.RecordingsScreen
 import com.droidnova.screenrecorder.ui.navigation.TopLevelDestination
 import com.droidnova.screenrecorder.ui.theme.ScreenRecorderTheme
@@ -49,10 +49,8 @@ import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.recording.PendingRecordingOutcome
 import com.droidnova.screenrecorder.recording.RecordingOutcomeType
-import com.droidnova.screenrecorder.ui.theme.RecorderNavigation
-import com.droidnova.screenrecorder.ui.theme.RecorderPrimary
-import com.droidnova.screenrecorder.ui.theme.RecorderPrimaryBright
-import com.droidnova.screenrecorder.ui.theme.RecorderTextSecondary
+import com.droidnova.screenrecorder.ui.theme.AppColorTheme
+import com.droidnova.screenrecorder.ui.theme.AppThemeMode
 import com.droidnova.screenrecorder.ads.BannerLoadState
 import com.droidnova.screenrecorder.ads.CollapsibleBanner
 import com.droidnova.screenrecorder.ads.shouldShowBanner
@@ -86,6 +84,12 @@ fun ScreenRecorderApp(
     onCountdownSelected: (Int) -> Unit = {},
     onScreenToolsEnabled: Boolean = false,
     onScreenToolsChanged: (Boolean) -> Unit = {},
+    canDrawOverlays: Boolean = false,
+    onOverlayPermissionRequest: () -> Unit = {},
+    themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    colorTheme: AppColorTheme = AppColorTheme.MINT,
+    onThemeModeSelected: (AppThemeMode) -> Unit = {},
+    onColorThemeSelected: (AppColorTheme) -> Unit = {},
     onResetSettings: () -> Unit = {},
     startFlowInProgress: Boolean = false,
     adsConfigured: Boolean = false,
@@ -94,7 +98,7 @@ fun ScreenRecorderApp(
     claimCollapsibleRequest: () -> Boolean = { false },
     onPrivacyChoices: () -> Unit = {},
 ) {
-    ScreenRecorderTheme {
+    ScreenRecorderTheme(themeMode, colorTheme) {
         val navController = rememberNavController()
         val backStackEntry by navController.currentBackStackEntryAsState()
         val currentRoute = backStackEntry?.destination?.route ?: TopLevelDestination.Home.route
@@ -154,7 +158,7 @@ fun ScreenRecorderApp(
             containerColor = MaterialTheme.colorScheme.background,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
-                Column(Modifier.fillMaxWidth().background(RecorderNavigation)) {
+                if (currentRoute != APPEARANCE_ROUTE) Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer)) {
                     BoxWithConstraints(Modifier.fillMaxWidth()) {
                         val eligible = shouldShowBanner(
                             recordingState, startFlowInProgress, consentAllowsAds, adsConfigured,
@@ -170,8 +174,8 @@ fun ScreenRecorderApp(
                             )
                         }
                     }
-                    Box(Modifier.fillMaxWidth().height(10.dp).background(Color.Black))
-                    NavigationBar(containerColor = RecorderNavigation) {
+                    Box(Modifier.fillMaxWidth().height(10.dp).background(MaterialTheme.colorScheme.surfaceContainer))
+                    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
                     TopLevelDestination.entries.forEach { destination ->
                         val selected = currentRoute == destination.route
                         NavigationBarItem(
@@ -186,11 +190,11 @@ fun ScreenRecorderApp(
                             icon = { androidx.compose.material3.Icon(painterResource(if (selected) destination.selectedIcon else destination.unselectedIcon), null) },
                             label = { Text(stringResource(destination.label)) },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = RecorderPrimaryBright,
-                                selectedTextColor = RecorderPrimaryBright,
-                                indicatorColor = RecorderPrimary.copy(alpha = 0.16f),
-                                unselectedIconColor = RecorderTextSecondary,
-                                unselectedTextColor = RecorderTextSecondary,
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
                             ),
                         )
                     }
@@ -231,17 +235,16 @@ fun ScreenRecorderApp(
                         }
                         composable(TopLevelDestination.Settings.route) {
                             SettingsScreen(
-                                audioMode = audioMode,
-                                audioModeEnabled = recordingState == RecordingState.Idle,
-                                deviceAudioAvailable = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q,
-                                onAudioModeSelected = onAudioModeSelected,
                                 countdownSeconds = countdownSeconds,
                                 onCountdownSelected = onCountdownSelected,
                                 onScreenToolsEnabled = onScreenToolsEnabled,
                                 onScreenToolsChanged = onScreenToolsChanged,
-                                videoOptions = videoOptions,
-                                selectedVideo = selectedVideo,
-                                onVideoSelected = onVideoSelected,
+                                canDrawOverlays = canDrawOverlays,
+                                themeMode = themeMode,
+                                colorTheme = colorTheme,
+                                settingsEnabled = recordingState == RecordingState.Idle,
+                                onOverlayPermissionRequest = onOverlayPermissionRequest,
+                                onAppearance = { navController.navigate(APPEARANCE_ROUTE) },
                                 onNotificationSettings = onNotificationSettings,
                                 onApplicationSettings = onApplicationSettings,
                                 privacyOptionsRequired = privacyOptionsRequired,
@@ -253,11 +256,22 @@ fun ScreenRecorderApp(
                                 },
                             )
                         }
+                        composable(APPEARANCE_ROUTE) {
+                            AppearanceScreen(
+                                themeMode = themeMode,
+                                colorTheme = colorTheme,
+                                onThemeModeSelected = onThemeModeSelected,
+                                onColorThemeSelected = onColorThemeSelected,
+                                onBack = { navController.popBackStack() },
+                            )
+                        }
                     }
                 }
         }
     }
 }
+
+private const val APPEARANCE_ROUTE = "appearance"
 
 @Preview(name = "Compact", widthDp = 360, heightDp = 800)
 @Preview(name = "Landscape medium", widthDp = 700, heightDp = 400)

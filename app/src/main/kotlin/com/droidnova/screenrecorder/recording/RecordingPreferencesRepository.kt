@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.domain.recording.RecordingPreset
+import com.droidnova.screenrecorder.ui.theme.AppColorTheme
+import com.droidnova.screenrecorder.ui.theme.AppThemeMode
 import java.io.IOException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -25,6 +27,8 @@ data class RecordingPreferences(
     val audioMode: AudioMode = AudioMode.None,
     val countdownSeconds: Int = 0,
     val onScreenToolsEnabled: Boolean = false,
+    val themeMode: AppThemeMode = AppThemeMode.SYSTEM,
+    val colorTheme: AppColorTheme = AppColorTheme.MINT,
     val notificationRequestedBefore: Boolean = false,
     val audioRequestedBefore: Boolean = false,
 )
@@ -40,6 +44,8 @@ class RecordingPreferencesRepository(context: Context) {
             audioMode = enumOrDefault(values[AUDIO], AudioMode.None),
             countdownSeconds = values[COUNTDOWN]?.takeIf { it in setOf(0, 3, 5, 15) } ?: 0,
             onScreenToolsEnabled = values[ON_SCREEN_TOOLS] ?: false,
+            themeMode = enumOrDefault(values[THEME_MODE], AppThemeMode.SYSTEM),
+            colorTheme = enumOrDefault(values[COLOR_THEME], AppColorTheme.MINT),
             notificationRequestedBefore = values[NOTIFICATION_REQUESTED] ?: false,
             audioRequestedBefore = values[AUDIO_REQUESTED] ?: false,
         )
@@ -55,6 +61,8 @@ class RecordingPreferencesRepository(context: Context) {
     suspend fun saveAudio(mode: AudioMode) = dataStore.edit { it[AUDIO] = mode.name }
     suspend fun saveCountdown(seconds: Int) = dataStore.edit { it[COUNTDOWN] = seconds }
     suspend fun saveOnScreenToolsEnabled(enabled: Boolean) = dataStore.edit { it[ON_SCREEN_TOOLS] = enabled }
+    suspend fun saveThemeMode(mode: AppThemeMode) = dataStore.edit { it[THEME_MODE] = mode.name }
+    suspend fun saveColorTheme(theme: AppColorTheme) = dataStore.edit { it[COLOR_THEME] = theme.name }
     suspend fun markNotificationRequested() = dataStore.edit { it[NOTIFICATION_REQUESTED] = true }
     suspend fun markAudioRequested() = dataStore.edit { it[AUDIO_REQUESTED] = true }
     suspend fun reset() = dataStore.edit {
@@ -70,6 +78,8 @@ class RecordingPreferencesRepository(context: Context) {
         val AUDIO = stringPreferencesKey("audio_source")
         val COUNTDOWN = intPreferencesKey("countdown_seconds")
         val ON_SCREEN_TOOLS = booleanPreferencesKey("on_screen_tools_enabled")
+        val THEME_MODE = stringPreferencesKey("app_theme_mode")
+        val COLOR_THEME = stringPreferencesKey("app_color_theme")
         val NOTIFICATION_REQUESTED = booleanPreferencesKey("notification_permission_requested_before")
         val AUDIO_REQUESTED = booleanPreferencesKey("record_audio_permission_requested_before")
     }
