@@ -144,9 +144,10 @@ private fun Metrics(
                 items.forEach { it(Modifier.weight(1f)) }
             }
         } else {
+            val wrappedRowHorizontalPadding = maxWidth / 6
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) { items.take(3).forEach { it(Modifier.weight(1f)) } }
-                Row(Modifier.fillMaxWidth().padding(horizontal = maxWidth / 6), horizontalArrangement = Arrangement.spacedBy(gap)) { items.takeLast(2).forEach { it(Modifier.weight(1f)) } }
+                Row(Modifier.fillMaxWidth().padding(horizontal = wrappedRowHorizontalPadding), horizontalArrangement = Arrangement.spacedBy(gap)) { items.takeLast(2).forEach { it(Modifier.weight(1f)) } }
             }
         }
     }
