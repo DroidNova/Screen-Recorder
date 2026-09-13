@@ -39,6 +39,8 @@ import com.droidnova.screenrecorder.recording.RecordingStorage
 import com.droidnova.screenrecorder.recording.StorageCheck
 import com.droidnova.screenrecorder.recording.RecordingPreferences
 import com.droidnova.screenrecorder.recording.RecordingPreferencesRepository
+import com.droidnova.screenrecorder.rating.RatePromptPersistence
+import com.droidnova.screenrecorder.rating.RatePromptRepository
 import com.droidnova.screenrecorder.ui.ScreenRecorderApp
 import com.droidnova.screenrecorder.ui.theme.AppColorTheme
 import com.droidnova.screenrecorder.ui.theme.AppThemeMode
@@ -59,6 +61,7 @@ class MainActivity : ComponentActivity() {
     private var pendingShowCountdownOverlay = false
     private var overlayPermissionRequestPending = false
     private lateinit var preferencesRepository: RecordingPreferencesRepository
+    private lateinit var ratePromptRepository: RatePromptRepository
     private var preferences = RecordingPreferences()
     private var projectionConsentPending = false
     private var notificationPermissionPending = false
@@ -78,6 +81,8 @@ class MainActivity : ComponentActivity() {
     private val colorTheme = MutableStateFlow(AppColorTheme.MINT)
     private val statusMessage = mutableStateOf<Int?>(null)
     private val recordingRuntime = mutableStateOf(RecordingRuntimeSnapshot())
+    private val ratePromptState = MutableStateFlow(RatePromptPersistence())
+    private val ratePromptLaunchRecorded = MutableStateFlow(false)
     private var serviceBinder: ScreenRecordingService.LocalBinder? = null
     private var runtimeCollection: Job? = null
     private var serviceBound = false
@@ -164,6 +169,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferencesRepository = RecordingPreferencesRepository(this)
+        ratePromptRepository = RatePromptRepository(this)
         overlayAccessGranted.value = Settings.canDrawOverlays(this)
         pendingStartStep.value = savedInstanceState?.getString(STATE_PENDING_START_STEP)
             ?.let { runCatching { StartStep.valueOf(it) }.getOrNull() }
@@ -175,6 +181,17 @@ class MainActivity : ComponentActivity() {
         val pendingShortEdge = savedInstanceState?.getInt(STATE_PENDING_SHORT_EDGE) ?: 0
         val pendingFps = savedInstanceState?.getInt(STATE_PENDING_FPS) ?: 0
         val pendingBitrate = savedInstanceState?.getInt(STATE_PENDING_BITRATE) ?: 0
+        lifecycleScope.launch {
+            ratePromptRepository.state.collect { ratePromptState.value = it }
+        }
+        if (savedInstanceState == null) {
+            lifecycleScope.launch {
+                ratePromptState.value = ratePromptRepository.recordLaunch()
+                ratePromptLaunchRecorded.value = true
+            }
+        } else {
+            ratePromptLaunchRecorded.value = savedInstanceState.getBoolean(STATE_RATE_PROMPT_LAUNCH_RECORDED)
+        }
         lifecycleScope.launch {
             preferencesRepository.preferences.collect { stored ->
                 preferences = stored
@@ -222,6 +239,8 @@ class MainActivity : ComponentActivity() {
             val selectedThemeMode by themeMode.collectAsState()
             val selectedColorTheme by colorTheme.collectAsState()
             val adsState by adsController.state.collectAsState()
+            val promptState by ratePromptState.collectAsState()
+            val promptLaunchRecorded by ratePromptLaunchRecorded.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
                 elapsedSeconds = runtime.elapsedSeconds,
@@ -270,6 +289,12 @@ class MainActivity : ComponentActivity() {
                 privacyOptionsRequired = adsState.privacyOptionsRequired,
                 claimCollapsibleRequest = adsController::claimCollapsibleRequest,
                 onPrivacyChoices = { adsController.showPrivacyOptions(this) },
+                ratePromptState = promptState,
+                ratePromptLaunchRecorded = promptLaunchRecorded,
+                onRatePromptCompleted = {
+                    ratePromptState.value = ratePromptState.value.copy(completed = true)
+                    lifecycleScope.launch { ratePromptRepository.markCompleted() }
+                },
             )
             storageDialog.value?.let { failure ->
                 val minimum = (failure as? StorageCheck.Insufficient)?.policy?.minimumStartBytes
@@ -294,6 +319,7 @@ class MainActivity : ComponentActivity() {
         outState.putInt(STATE_PENDING_COUNTDOWN, pendingCountdown)
         outState.putBoolean(STATE_PENDING_COUNTDOWN_OVERLAY, pendingShowCountdownOverlay)
         outState.putBoolean(STATE_OVERLAY_PERMISSION_PENDING, overlayPermissionRequestPending)
+        outState.putBoolean(STATE_RATE_PROMPT_LAUNCH_RECORDED, ratePromptLaunchRecorded.value)
         pendingVideo?.let {
             outState.putInt(STATE_PENDING_SHORT_EDGE, it.shortEdge); outState.putInt(STATE_PENDING_FPS, it.frameRate.framesPerSecond)
             outState.putInt(STATE_PENDING_BITRATE, it.bitrate.bitsPerSecond)
@@ -512,5 +538,6 @@ class MainActivity : ComponentActivity() {
         const val STATE_PENDING_SHORT_EDGE = "pending_short_edge"
         const val STATE_PENDING_FPS = "pending_fps"
         const val STATE_PENDING_BITRATE = "pending_bitrate"
+        const val STATE_RATE_PROMPT_LAUNCH_RECORDED = "rate_prompt_launch_recorded"
     }
 }
