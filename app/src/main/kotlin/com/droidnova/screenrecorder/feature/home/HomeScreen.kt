@@ -1,5 +1,6 @@
 package com.droidnova.screenrecorder.feature.home
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,19 +21,24 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.droidnova.screenrecorder.R
 import com.droidnova.screenrecorder.domain.recording.AudioMode
 import com.droidnova.screenrecorder.domain.recording.RecordingPreset
 import com.droidnova.screenrecorder.domain.recording.RecordingState
+import com.droidnova.screenrecorder.domain.recording.hasActiveOrFinalizingSession
+import com.droidnova.screenrecorder.feature.settings.AudioSelectorSheet
 import com.droidnova.screenrecorder.recording.AvailableVideoConfiguration
 import com.droidnova.screenrecorder.ui.theme.Spacing
 import java.text.NumberFormat
@@ -46,7 +52,6 @@ fun HomeScreen(
     elapsedSeconds: Long = 0,
     countdownRemainingSeconds: Int? = null,
     availableStorageBytes: Long? = null,
-    statusMessage: String? = null,
     onStartRecording: () -> Unit = {}, onStopRecording: () -> Unit = {},
     onPauseRecording: () -> Unit = {}, onResumeRecording: () -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
@@ -54,38 +59,55 @@ fun HomeScreen(
     settingsValid: Boolean = false,
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     audioMode: AudioMode = AudioMode.None,
+    onAudioModeSelected: (AudioMode) -> Unit = {},
+    deviceAudioAvailable: Boolean = true,
+    onConfigurationOverlayChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var openSheet by rememberSaveable { mutableStateOf<HomeSheet?>(null) }
+    var showAudioSheet by rememberSaveable { mutableStateOf(false) }
     val editable = recordingState == RecordingState.Idle
+    LaunchedEffect(openSheet, showAudioSheet) { onConfigurationOverlayChanged(openSheet != null || showAudioSheet) }
+    DisposableEffect(Unit) { onDispose { onConfigurationOverlayChanged(false) } }
     BoxWithConstraints(modifier.fillMaxSize()) {
-        val viewportWidth = maxWidth
-        val viewportHeight = maxHeight
-        val landscape = viewportWidth >= 600.dp && viewportHeight < 600.dp
-        val largeText = LocalDensity.current.fontScale > 1.3f
-        val contentModifier = Modifier.fillMaxSize().widthIn(max = 840.dp).align(Alignment.TopCenter)
-            .verticalScroll(rememberScrollState()).padding(horizontal = Spacing.Page, vertical = Spacing.Standard)
+        val landscape = maxWidth >= 600.dp && maxHeight < 600.dp
+        val wrapMetrics = LocalDensity.current.fontScale > 1.3f || maxWidth < 330.dp
         if (landscape) {
-            Row(contentModifier, horizontalArrangement = Arrangement.spacedBy(Spacing.Large)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
-                    Header(); Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText, { openSheet = it })
+            Row(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Header()
+                    Metrics(selectedVideo, availableStorageBytes, audioMode, editable, wrapMetrics, { openSheet = it }, { showAudioSheet = true })
                 }
-                TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
-                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage, Modifier.weight(1f))
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    TimerPanel(recordingState, elapsedSeconds, countdownRemainingSeconds)
+                    RecordingActions(recordingState, settingsValid, onStartRecording, onStopRecording, onPauseRecording, onResumeRecording)
+                }
             }
         } else {
-            Column(contentModifier, verticalArrangement = Arrangement.spacedBy(Spacing.Section)) {
-                Header()
-                Metrics(videoOptions, selectedVideo, availableStorageBytes, editable, largeText || viewportWidth < 350.dp, { openSheet = it })
-                Spacer(Modifier.height((viewportHeight - 560.dp).coerceIn(32.dp, 180.dp)))
-                TimerAndControls(recordingState, elapsedSeconds, countdownRemainingSeconds, settingsValid,
-                    onStartRecording, onStopRecording, onPauseRecording, onResumeRecording, statusMessage)
+            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 12.dp)) {
+                Column(Modifier.align(Alignment.TopCenter), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Header()
+                    Metrics(selectedVideo, availableStorageBytes, audioMode, editable, wrapMetrics, { openSheet = it }, { showAudioSheet = true })
+                }
+                TimerPanel(recordingState, elapsedSeconds, countdownRemainingSeconds, Modifier.align(Alignment.Center))
+                RecordingActions(
+                    recordingState, settingsValid, onStartRecording, onStopRecording, onPauseRecording, onResumeRecording,
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 20.dp),
+                )
             }
         }
     }
     openSheet?.let { sheet ->
         ConfigurationSheet(sheet, videoOptions, selectedVideo, onDismiss = { openSheet = null }) {
             onVideoSelected(it); openSheet = null
+        }
+    }
+    if (showAudioSheet) {
+        AudioSelectorSheet(audioMode, deviceAudioAvailable, onDismiss = { showAudioSheet = false }) {
+            onAudioModeSelected(it); showAudioSheet = false
         }
     }
 }
@@ -97,94 +119,139 @@ fun HomeScreen(
 
 @Composable
 private fun Metrics(
-    options: List<AvailableVideoConfiguration>, selected: AvailableVideoConfiguration?, storage: Long?,
-    editable: Boolean, grid: Boolean, open: (HomeSheet) -> Unit,
+    selected: AvailableVideoConfiguration?,
+    storage: Long?,
+    audioMode: AudioMode,
+    editable: Boolean,
+    wrap: Boolean,
+    open: (HomeSheet) -> Unit,
+    openAudio: () -> Unit,
 ) {
-    val storageValue = storage?.let { stringResource(R.string.storage_value, formatStorageNumber(it)) } ?: "—"
-    val metrics: @Composable RowScope.() -> Unit = {
-        StorageMetric(storageValue, storage != null, Modifier.weight(1f))
-        MetricIndicator(selected?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—", stringResource(R.string.quality), editable,
-            { open(HomeSheet.Quality) }, Modifier.weight(1f))
-        MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable,
-            { open(HomeSheet.Resolution) }, Modifier.weight(1f))
-        MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable,
-            { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
-    }
-    if (!grid) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Small), content = metrics)
-    else Column(verticalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
-            StorageMetric(storageValue, storage != null, Modifier.weight(1f))
-            MetricIndicator(selected?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—", stringResource(R.string.quality), editable, { open(HomeSheet.Quality) }, Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
-            MetricIndicator(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), editable, { open(HomeSheet.Resolution) }, Modifier.weight(1f))
-            MetricIndicator(selected?.let { stringResource(R.string.fps_value, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), editable, { open(HomeSheet.FrameRate) }, Modifier.weight(1f))
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val gap = 4.dp
+        val availableWidth = maxWidth - gap * 4
+        val circleSize = (availableWidth / 5).coerceIn(52.dp, 60.dp)
+        val storageValue = storage?.let { stringResource(R.string.storage_value, formatStorageNumber(it)) } ?: "—"
+        val items = listOf<@Composable (Modifier) -> Unit>(
+            { modifier -> StorageMetric(storageValue, storage != null, circleSize, modifier) },
+            { modifier -> QuickMetric(selected?.let { stringResource(R.string.bitrate_value, it.bitrate.bitsPerSecond / 1_000_000) } ?: "—", stringResource(R.string.quality), circleSize, editable, modifier) { open(HomeSheet.Quality) } },
+            { modifier -> QuickMetric(selected?.let { stringResource(R.string.resolution_label, it.shortEdge) } ?: "—", stringResource(R.string.resolution), circleSize, editable, modifier) { open(HomeSheet.Resolution) } },
+            { modifier -> QuickMetric(selected?.let { stringResource(R.string.fps_value_uppercase, it.frameRate.framesPerSecond) } ?: "—", stringResource(R.string.fps_label), circleSize, editable, modifier) { open(HomeSheet.FrameRate) } },
+            { modifier -> AudioMetric(audioMode, circleSize, editable, modifier, openAudio) },
+        )
+        if (!wrap) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                items.forEach { it(Modifier.weight(1f)) }
+            }
+        } else {
+            val wrappedRowHorizontalPadding = maxWidth / 6
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) { items.take(3).forEach { it(Modifier.weight(1f)) } }
+                Row(Modifier.fillMaxWidth().padding(horizontal = wrappedRowHorizontalPadding), horizontalArrangement = Arrangement.spacedBy(gap)) { items.takeLast(2).forEach { it(Modifier.weight(1f)) } }
+            }
         }
     }
 }
 
-@Composable private fun RowScope.StorageMetric(value: String, known: Boolean, modifier: Modifier) {
+@Composable private fun StorageMetric(value: String, known: Boolean, circleSize: Dp, modifier: Modifier) {
     val description = stringResource(R.string.storage_accessibility, value)
     Column(modifier.semantics { contentDescription = description }, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.sizeIn(minWidth = 64.dp, minHeight = 64.dp, maxWidth = 84.dp, maxHeight = 84.dp).aspectRatio(1f), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(circleSize), contentAlignment = Alignment.Center) {
             val track = MaterialTheme.colorScheme.outlineVariant
             val primary = MaterialTheme.colorScheme.primary
             Canvas(Modifier.fillMaxSize()) {
-                val stroke = 5.dp.toPx(); val inset = stroke / 2
+                val stroke = 4.dp.toPx(); val inset = stroke / 2
                 drawArc(track, 120f, 300f, false, Offset(inset, inset), Size(size.width - stroke, size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
                 drawArc(primary, 120f, if (known) 240f else 0f, false, Offset(inset, inset), Size(size.width - stroke, size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1)
-                Text(stringResource(R.string.free), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value, Modifier.padding(horizontal = 3.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+                Text(stringResource(R.string.free), fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
             }
         }
-        Spacer(Modifier.height(Spacing.Small)); Text(stringResource(R.string.storage), style = MaterialTheme.typography.labelLarge)
+        QuickLabel(stringResource(R.string.storage))
     }
 }
 
-@Composable private fun RowScope.MetricIndicator(value: String, label: String, enabled: Boolean, click: () -> Unit, modifier: Modifier) {
+@Composable private fun QuickMetric(value: String, label: String, circleSize: Dp, enabled: Boolean, modifier: Modifier, click: () -> Unit) {
     val description = stringResource(R.string.metric_accessibility, label, value)
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.sizeIn(minWidth = 64.dp, minHeight = 64.dp, maxWidth = 84.dp, maxHeight = 84.dp).aspectRatio(1f)
-            .clip(CircleShape).border(2.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
-            .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = click)
-            .semantics { contentDescription = description }, contentAlignment = Alignment.Center) {
-            Text(value, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 2)
+        Box(
+            Modifier.size(circleSize).clip(CircleShape)
+                .border(1.5.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = click)
+                .semantics { contentDescription = description; if (!enabled) disabled() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(value, Modifier.padding(horizontal = 3.dp), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
         }
-        Spacer(Modifier.height(Spacing.Small)); Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        QuickLabel(label)
     }
 }
 
-@Composable private fun TimerAndControls(
-    state: RecordingState, elapsed: Long, countdown: Int?, valid: Boolean,
-    start: () -> Unit, stop: () -> Unit, pause: () -> Unit, resume: () -> Unit,
-    message: String?, modifier: Modifier = Modifier,
-) {
-    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Spacing.Standard)) {
-        val shown = if (state is RecordingState.Countdown) countdown?.toLong() ?: 0 else elapsed
+@Composable private fun AudioMetric(mode: AudioMode, circleSize: Dp, enabled: Boolean, modifier: Modifier, click: () -> Unit) {
+    val fullValue = stringResource(mode.fullLabel())
+    val description = stringResource(R.string.metric_accessibility, stringResource(R.string.audio), fullValue)
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            Modifier.size(circleSize).clip(CircleShape)
+                .border(1.5.dp, if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                .clickable(enabled = enabled, role = Role.Button, onClickLabel = description, onClick = click)
+                .semantics { contentDescription = description; if (!enabled) disabled() },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(painterResource(mode.icon()), null, Modifier.size(18.dp), tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(mode.shortLabel()), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+        }
+        QuickLabel(stringResource(R.string.audio))
+    }
+}
+
+@Composable private fun QuickLabel(label: String) = Text(label, Modifier.padding(top = 5.dp), fontSize = 11.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center, maxLines = 1, softWrap = false)
+
+@Composable private fun TimerPanel(state: RecordingState, elapsed: Long, countdown: Int?, modifier: Modifier = Modifier) {
+    val shown = when {
+        state is RecordingState.Countdown -> countdown?.toLong() ?: 0
+        state.hasActiveOrFinalizingSession -> elapsed
+        else -> 0
+    }
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Box(Modifier.width(224.dp).height(88.dp).border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) {
-            Text(formatElapsed(shown), fontSize = 48.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+            Text(formatElapsed(shown), fontSize = 48.sp, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
         }
         if (state is RecordingState.Paused) Text(stringResource(R.string.recording_paused), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+@Composable private fun RecordingActions(
+    state: RecordingState, valid: Boolean, start: () -> Unit, stop: () -> Unit, pause: () -> Unit, resume: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         when (state) {
             RecordingState.Idle, is RecordingState.Completed, is RecordingState.Failed -> Button(start, enabled = valid,
-                modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 64.dp), shape = RoundedCornerShape(22.dp)) { Text(stringResource(R.string.start)) }
-            is RecordingState.Countdown -> Button(stop, modifier = Modifier.widthIn(min = 184.dp).heightIn(min = 60.dp)) { Text(stringResource(R.string.cancel)) }
-            is RecordingState.Preparing -> ProgressAction(R.string.starting)
-            is RecordingState.Recording -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
-                OutlinedButton(pause, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.pause_recording)) }
-                Button(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+                modifier = Modifier.width(184.dp).heightIn(min = 64.dp), shape = RoundedCornerShape(22.dp)) {
+                Text(stringResource(R.string.start), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
             }
-            is RecordingState.Paused -> Row(horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
-                Button(resume, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.resume_recording)) }
-                OutlinedButton(stop, modifier = Modifier.width(112.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop_recording)) }
+            is RecordingState.Countdown -> Button(stop, modifier = Modifier.width(184.dp).heightIn(min = 60.dp)) { Text(stringResource(R.string.cancel), maxLines = 1, softWrap = false) }
+            is RecordingState.Preparing -> ProgressAction(R.string.starting)
+            is RecordingState.Recording -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(pause, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.pause_recording), maxLines = 1, softWrap = false) }
+                Button(stop, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop), maxLines = 1, softWrap = false) }
+            }
+            is RecordingState.Paused -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(resume, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.resume_recording), maxLines = 1, softWrap = false) }
+                OutlinedButton(stop, modifier = Modifier.width(120.dp).heightIn(min = 56.dp)) { Text(stringResource(R.string.stop), maxLines = 1, softWrap = false) }
             }
             is RecordingState.Stopping -> ProgressAction(R.string.saving)
         }
-        message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center) }
     }
 }
+
+private fun AudioMode.shortLabel() = when (this) { AudioMode.None -> R.string.audio_off_short; AudioMode.Microphone -> R.string.audio_mic_short; AudioMode.DeviceAudio -> R.string.audio_device_short }
+private fun AudioMode.fullLabel() = when (this) { AudioMode.None -> R.string.audio_none; AudioMode.Microphone -> R.string.audio_microphone; AudioMode.DeviceAudio -> R.string.audio_device }
+@DrawableRes private fun AudioMode.icon() = when (this) { AudioMode.None -> R.drawable.ic_audio_off; AudioMode.Microphone -> R.drawable.ic_microphone; AudioMode.DeviceAudio -> R.drawable.ic_device_audio }
 
 @Composable private fun ProgressAction(label: Int) = Row(Modifier.heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.Component)) {
     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp); Text(stringResource(label))
@@ -198,13 +265,13 @@ private fun Metrics(
     val choices = when (sheet) {
         HomeSheet.Quality -> listOfNotNull(
             resolveNamedPreset(options, RecordingPreset.DataSaver), resolveNamedPreset(options, RecordingPreset.Balanced),
-            resolveNamedPreset(options, RecordingPreset.HighQuality), selected?.copy(preset = RecordingPreset.Custom),
+            resolveNamedPreset(options, RecordingPreset.HighQuality), selected?.takeIf { it.preset == RecordingPreset.Custom },
         ).distinctBy { it.preset }
         HomeSheet.Resolution -> options.distinctBy { it.shortEdge }.sortedBy { it.shortEdge }
         HomeSheet.FrameRate -> options.filter { selected == null || it.shortEdge == selected.shortEdge }.distinctBy { it.frameRate.framesPerSecond }.sortedBy { it.frameRate.framesPerSecond }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = Spacing.Section, vertical = Spacing.Small)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = Spacing.Section, vertical = Spacing.Small)) {
             Text(stringResource(when (sheet) { HomeSheet.Quality -> R.string.recording_quality; HomeSheet.Resolution -> R.string.resolution; HomeSheet.FrameRate -> R.string.frame_rate }),
                 style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(bottom = Spacing.Standard).semantics { heading() })
             choices.forEach { option ->
