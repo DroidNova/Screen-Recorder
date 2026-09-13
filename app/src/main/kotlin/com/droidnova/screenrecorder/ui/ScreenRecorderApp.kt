@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -54,6 +55,9 @@ import com.droidnova.screenrecorder.ui.theme.AppThemeMode
 import com.droidnova.screenrecorder.ads.BannerLoadState
 import com.droidnova.screenrecorder.ads.CollapsibleBanner
 import com.droidnova.screenrecorder.ads.shouldShowBanner
+import com.droidnova.screenrecorder.feature.rating.RatePromptSheet
+import com.droidnova.screenrecorder.rating.RatePromptPersistence
+import com.droidnova.screenrecorder.rating.isRatePromptEligible
 import kotlinx.coroutines.launch
 
 @Composable
@@ -97,6 +101,9 @@ fun ScreenRecorderApp(
     privacyOptionsRequired: Boolean = false,
     claimCollapsibleRequest: () -> Boolean = { false },
     onPrivacyChoices: () -> Unit = {},
+    ratePromptState: RatePromptPersistence = RatePromptPersistence(),
+    ratePromptLaunchRecorded: Boolean = false,
+    onRatePromptCompleted: () -> Unit = {},
 ) {
     ScreenRecorderTheme(themeMode, colorTheme) {
         val navController = rememberNavController()
@@ -105,6 +112,7 @@ fun ScreenRecorderApp(
         val snackbarHostState = remember { SnackbarHostState() }
         val snackbarScope = rememberCoroutineScope()
         var overlayVisible by remember { mutableStateOf(false) }
+        var ratePromptDismissedThisSession by rememberSaveable { mutableStateOf(false) }
         var bannerLoadState by remember { mutableStateOf(BannerLoadState.NotRequested) }
         val lifecycleOwner = LocalContext.current as LifecycleOwner
         var appInForeground by remember {
@@ -267,6 +275,21 @@ fun ScreenRecorderApp(
                         }
                     }
                 }
+        }
+        if (isRatePromptEligible(
+                appOpenCount = ratePromptState.appOpenCount,
+                launchRecorded = ratePromptLaunchRecorded,
+                completed = ratePromptState.completed,
+                dismissedThisSession = ratePromptDismissedThisSession,
+            )
+        ) {
+            RatePromptSheet(
+                onDismiss = { ratePromptDismissedThisSession = true },
+                onCompleted = {
+                    ratePromptDismissedThisSession = true
+                    onRatePromptCompleted()
+                },
+            )
         }
     }
 }

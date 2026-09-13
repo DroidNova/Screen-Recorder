@@ -147,4 +147,17 @@
     <string name="privacy_choices_summary">Manage ad privacy preferences</string>
     <string name="version">Version</string>
     <string name="version_value">0.004</string>
+    <string name="rate_prompt_title">Enjoying %1$s?</string>
+    <string name="rate_prompt_message">A five-star rating supports the app and helps more people discover it.</string>
+    <plurals name="rate_stars_description">
+        <item quantity="one">Rate %1$d star</item>
+        <item quantity="other">Rate %1$d stars</item>
+    </plurals>
+    <string name="rate_later">Rate later</string>
+    <string name="give_feedback">Give feedback</string>
+    <string name="play_store_unavailable">Google Play is unavailable.</string>
+    <string name="share_app_message">Try Screen Recorder: %1$s</string>
+    <string name="share_app_via">Share app via</string>
+    <string name="version_unknown">Unknown version</string>
+    <string name="no_email_app">No email app is available.</string>
 </resources>
