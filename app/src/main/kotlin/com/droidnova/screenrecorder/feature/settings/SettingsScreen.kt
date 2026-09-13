@@ -34,6 +34,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,6 +68,8 @@ fun SettingsScreen(
     audioModeEnabled: Boolean = true,
     deviceAudioAvailable: Boolean = true,
     countdownSeconds: Int = 0,
+    onScreenToolsEnabled: Boolean = false,
+    onScreenToolsChanged: (Boolean) -> Unit = {},
     onCountdownSelected: (Int) -> Unit = {},
     onAudioModeSelected: (AudioMode) -> Unit = {},
     videoOptions: List<AvailableVideoConfiguration> = emptyList(),
@@ -103,6 +106,14 @@ fun SettingsScreen(
                 DividerRow()
                 CompactSettingsRow(R.string.countdown, if (countdownSeconds == 0) R.string.countdown_off else null,
                     valueText = if (countdownSeconds == 0) null else stringResource(R.string.countdown_seconds, countdownSeconds), enabled = enabled) { sheet = SettingsSheet.Countdown }
+                DividerRow()
+                CompactSwitchRow(
+                    title = R.string.on_screen_tools,
+                    summary = R.string.on_screen_tools_summary,
+                    checked = onScreenToolsEnabled,
+                    enabled = enabled,
+                    onCheckedChange = onScreenToolsChanged,
+                )
                 if (selectedVideo?.preset == RecordingPreset.Custom) {
                     DividerRow(); CompactSettingsRow(R.string.resolution, valueText = stringResource(R.string.resolution_label, selectedVideo.shortEdge), enabled = enabled) { sheet = SettingsSheet.Resolution }
                     DividerRow(); CompactSettingsRow(R.string.frame_rate, valueText = stringResource(R.string.fps_value_uppercase, selectedVideo.frameRate.framesPerSecond), enabled = enabled) { sheet = SettingsSheet.FrameRate }
@@ -189,6 +200,29 @@ private fun CompactSettingsRow(
             Spacer(Modifier.width(12.dp)); Text(it, Modifier.widthIn(max = 148.dp), maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (onClick != null) Text("›", modifier = Modifier.width(48.dp), fontSize = 28.sp, color = MaterialTheme.colorScheme.primary, maxLines = 1)
+    }
+}
+
+@Composable
+private fun CompactSwitchRow(
+    title: Int,
+    summary: Int,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().defaultMinSize(minHeight = 68.dp)
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(stringResource(title), color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(summary), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Spacer(Modifier.width(12.dp))
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

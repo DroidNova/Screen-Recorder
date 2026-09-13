@@ -24,6 +24,7 @@ data class RecordingPreferences(
     val customBitrate: Int? = null,
     val audioMode: AudioMode = AudioMode.None,
     val countdownSeconds: Int = 0,
+    val onScreenToolsEnabled: Boolean = false,
     val notificationRequestedBefore: Boolean = false,
     val audioRequestedBefore: Boolean = false,
 )
@@ -38,6 +39,7 @@ class RecordingPreferencesRepository(context: Context) {
             customShortEdge = values[SHORT_EDGE], customFps = values[FPS], customBitrate = values[BITRATE],
             audioMode = enumOrDefault(values[AUDIO], AudioMode.None),
             countdownSeconds = values[COUNTDOWN]?.takeIf { it in setOf(0, 3, 5, 15) } ?: 0,
+            onScreenToolsEnabled = values[ON_SCREEN_TOOLS] ?: false,
             notificationRequestedBefore = values[NOTIFICATION_REQUESTED] ?: false,
             audioRequestedBefore = values[AUDIO_REQUESTED] ?: false,
         )
@@ -52,10 +54,12 @@ class RecordingPreferencesRepository(context: Context) {
     }
     suspend fun saveAudio(mode: AudioMode) = dataStore.edit { it[AUDIO] = mode.name }
     suspend fun saveCountdown(seconds: Int) = dataStore.edit { it[COUNTDOWN] = seconds }
+    suspend fun saveOnScreenToolsEnabled(enabled: Boolean) = dataStore.edit { it[ON_SCREEN_TOOLS] = enabled }
     suspend fun markNotificationRequested() = dataStore.edit { it[NOTIFICATION_REQUESTED] = true }
     suspend fun markAudioRequested() = dataStore.edit { it[AUDIO_REQUESTED] = true }
     suspend fun reset() = dataStore.edit {
         it.remove(PRESET); it.remove(SHORT_EDGE); it.remove(FPS); it.remove(BITRATE); it.remove(AUDIO); it.remove(COUNTDOWN)
+        it.remove(ON_SCREEN_TOOLS)
     }
 
     private companion object {
@@ -65,6 +69,7 @@ class RecordingPreferencesRepository(context: Context) {
         val BITRATE = intPreferencesKey("custom_video_bitrate")
         val AUDIO = stringPreferencesKey("audio_source")
         val COUNTDOWN = intPreferencesKey("countdown_seconds")
+        val ON_SCREEN_TOOLS = booleanPreferencesKey("on_screen_tools_enabled")
         val NOTIFICATION_REQUESTED = booleanPreferencesKey("notification_permission_requested_before")
         val AUDIO_REQUESTED = booleanPreferencesKey("record_audio_permission_requested_before")
     }
