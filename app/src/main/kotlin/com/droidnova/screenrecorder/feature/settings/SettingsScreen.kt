@@ -74,6 +74,9 @@ fun SettingsScreen(
     onVideoSelected: (AvailableVideoConfiguration) -> Unit = {},
     onNotificationSettings: () -> Unit = {},
     onApplicationSettings: () -> Unit = {},
+    privacyOptionsRequired: Boolean = false,
+    onPrivacyChoices: () -> Unit = {},
+    onConfigurationOverlayChanged: (Boolean) -> Unit = {},
     onReset: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -83,6 +86,8 @@ fun SettingsScreen(
     val notificationAllowed = Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
     val microphoneAllowed = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
     val enabled = audioModeEnabled
+    androidx.compose.runtime.LaunchedEffect(sheet, showReset) { onConfigurationOverlayChanged(sheet != null || showReset) }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onConfigurationOverlayChanged(false) } }
 
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -123,6 +128,10 @@ fun SettingsScreen(
             SettingsGroup(R.string.about) {
                 val versionName = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "—"
                 CompactSettingsRow(R.string.version, valueText = versionName)
+                if (privacyOptionsRequired) {
+                    DividerRow()
+                    CompactSettingsRow(R.string.privacy_choices, summary = stringResource(R.string.privacy_choices_summary), onClick = onPrivacyChoices)
+                }
                 DividerRow()
                 CompactSettingsRow(R.string.reset_recording_settings, onClick = { showReset = true })
             }
@@ -131,8 +140,12 @@ fun SettingsScreen(
     }
 
     sheet?.let { current ->
-        SelectorSheet(current, audioMode, deviceAudioAvailable, countdownSeconds, videoOptions, selectedVideo, onDismiss = { sheet = null }) { audio, seconds, video ->
-            audio?.let(onAudioModeSelected); seconds?.let(onCountdownSelected); video?.let(onVideoSelected); sheet = null
+        if (current == SettingsSheet.Audio) {
+            AudioSelectorSheet(audioMode, deviceAudioAvailable, onDismiss = { sheet = null }) {
+                onAudioModeSelected(it); sheet = null
+            }
+        } else SelectorSheet(current, countdownSeconds, videoOptions, selectedVideo, onDismiss = { sheet = null }) { seconds, video ->
+            seconds?.let(onCountdownSelected); video?.let(onVideoSelected); sheet = null
         }
     }
     if (showReset) AlertDialog(onDismissRequest = { showReset = false }, title = { Text(stringResource(R.string.reset_recording_settings_question)) },
@@ -185,23 +198,18 @@ private fun CompactSettingsRow(
 @Composable
 private fun SelectorSheet(
     sheet: SettingsSheet,
-    audioMode: AudioMode,
-    deviceAudioAvailable: Boolean,
     countdown: Int,
     options: List<AvailableVideoConfiguration>,
     selected: AvailableVideoConfiguration?,
     onDismiss: () -> Unit,
-    choose: (AudioMode?, Int?, AvailableVideoConfiguration?) -> Unit,
+    choose: (Int?, AvailableVideoConfiguration?) -> Unit,
 ) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)) {
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text(stringResource(sheet.title()), style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(8.dp).semantics { heading() })
             when (sheet) {
-                SettingsSheet.Audio -> AudioMode.entries.filter { it != AudioMode.DeviceAudio || deviceAudioAvailable }.forEach { mode ->
-                    ChoiceRow(stringResource(mode.labelResource()), mode == audioMode, mode == AudioMode.DeviceAudio, { choose(mode, null, null) })
-                }
                 SettingsSheet.Countdown -> listOf(0, 3, 5, 15).forEach { seconds ->
-                    ChoiceRow(if (seconds == 0) stringResource(R.string.countdown_off) else stringResource(R.string.countdown_seconds, seconds), seconds == countdown, false) { choose(null, seconds, null) }
+                    ChoiceRow(if (seconds == 0) stringResource(R.string.countdown_off) else stringResource(R.string.countdown_seconds, seconds), seconds == countdown, false) { choose(seconds, null) }
                 }
                 else -> sheet.videoChoices(options, selected).forEach { option ->
                     val chosen = when (sheet) {
@@ -217,7 +225,7 @@ private fun SelectorSheet(
                         SettingsSheet.FrameRate -> stringResource(R.string.fps_value_uppercase, option.frameRate.framesPerSecond)
                         else -> stringResource(R.string.bitrate_value, option.bitrate.bitsPerSecond / 1_000_000)
                     }
-                    ChoiceRow(label, chosen, false) { choose(null, null, option) }
+                    ChoiceRow(label, chosen, false) { choose(null, option) }
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -247,7 +255,7 @@ private fun SettingsSheet.videoChoices(options: List<AvailableVideoConfiguration
     SettingsSheet.Bitrate -> options.filter { selected == null || it.shortEdge == selected.shortEdge && it.frameRate == selected.frameRate }.distinctBy { it.bitrate }.map { it.copy(preset = RecordingPreset.Custom) }
     else -> emptyList()
 }
-private fun AudioMode.labelResource() = when (this) { AudioMode.None -> R.string.audio_none; AudioMode.Microphone -> R.string.audio_microphone; AudioMode.DeviceAudio -> R.string.audio_device }
+private fun AudioMode.labelResource() = audioLabelResource()
 private fun RecordingPreset.labelResource() = when (this) { RecordingPreset.DataSaver -> R.string.preset_data_saver; RecordingPreset.Balanced -> R.string.balanced; RecordingPreset.HighQuality -> R.string.preset_high_quality; RecordingPreset.Custom -> R.string.preset_custom }
 
 @Preview(showBackground = true, widthDp = 411, heightDp = 891)

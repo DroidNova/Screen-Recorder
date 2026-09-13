@@ -92,6 +92,10 @@
     <string name="capture">Capture</string>
     <string name="capture_preset">Capture preset</string>
     <string name="audio">Audio</string>
+    <string name="audio_off_short">Off</string>
+    <string name="audio_mic_short">Mic</string>
+    <string name="audio_device_short">Device</string>
+    <string name="audio_change_disabled">Stop recording to change audio.</string>
     <string name="not_configured">Not configured</string>
     <string name="audio_none">No audio</string>
     <string name="audio_microphone">Microphone</string>
@@ -127,6 +131,8 @@
     <string name="app_theme">App theme</string>
     <string name="system_default">System default</string>
     <string name="about">About</string>
+    <string name="privacy_choices">Privacy choices</string>
+    <string name="privacy_choices_summary">Manage ad privacy preferences</string>
     <string name="version">Version</string>
     <string name="version_value">0.004</string>
 </resources>

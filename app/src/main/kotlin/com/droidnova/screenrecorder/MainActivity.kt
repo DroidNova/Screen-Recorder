@@ -49,7 +49,7 @@ import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private enum class StartStep { NotificationPermission, AudioPermission, Projection, Starting }
+    private enum class StartStep { Validating, NotificationPermission, AudioPermission, Projection, Starting }
     private var pendingStartStep = mutableStateOf<StartStep?>(null)
     private var pendingVideo: AvailableVideoConfiguration? = null
     private var pendingCountdown = 0
@@ -154,7 +154,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         preferencesRepository = RecordingPreferencesRepository(this)
-        pendingStartStep.value = savedInstanceState?.getString(STATE_PENDING_START_STEP)?.let { runCatching { StartStep.valueOf(it) }.getOrNull() }
+        pendingStartStep.value = savedInstanceState?.getString(STATE_PENDING_START_STEP)
+            ?.let { runCatching { StartStep.valueOf(it) }.getOrNull() }
+            ?.takeUnless { it == StartStep.Validating }
         requestedSessionAudioMode = savedInstanceState?.getString(STATE_REQUESTED_AUDIO_MODE)?.toAudioMode() ?: AudioMode.None
         pendingCountdown = savedInstanceState?.getInt(STATE_PENDING_COUNTDOWN) ?: 0
         val pendingShortEdge = savedInstanceState?.getInt(STATE_PENDING_SHORT_EDGE) ?: 0
@@ -185,6 +187,7 @@ class MainActivity : ComponentActivity() {
             availableStorageBytes.value = withContext(Dispatchers.IO) { RecordingStorage(this@MainActivity).availableBytes() }
         }
         enableEdgeToEdge()
+        val adsController = (application as ScreenRecorderApplication).adsController
         setContent {
             val runtime = recordingRuntime.value
             val audioMode by selectedAudioMode.collectAsState()
@@ -194,6 +197,7 @@ class MainActivity : ComponentActivity() {
                 videoOptions.any { it.sameEncodingAs(selected) }
             } == true
             val countdown by countdownSeconds.collectAsState()
+            val adsState by adsController.state.collectAsState()
             ScreenRecorderApp(
                 recordingState = runtime.state,
                 elapsedSeconds = runtime.elapsedSeconds,
@@ -228,6 +232,12 @@ class MainActivity : ComponentActivity() {
                 countdownSeconds = countdown,
                 onCountdownSelected = { lifecycleScope.launch { preferencesRepository.saveCountdown(it) } },
                 onResetSettings = { lifecycleScope.launch { preferencesRepository.reset() } },
+                startFlowInProgress = pendingStartStep.value != null,
+                adsConfigured = adsState.configured,
+                consentAllowsAds = adsState.consentAllowsAds,
+                privacyOptionsRequired = adsState.privacyOptionsRequired,
+                claimCollapsibleRequest = adsController::claimCollapsibleRequest,
+                onPrivacyChoices = { adsController.showPrivacyOptions(this) },
             )
             storageDialog.value?.let { failure ->
                 val minimum = (failure as? StorageCheck.Insufficient)?.policy?.minimumStartBytes
@@ -240,6 +250,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        adsController.requestConsent(this)
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -272,14 +283,17 @@ class MainActivity : ComponentActivity() {
 
     private fun requestRecordingPermissions() {
         if (requestInProgress() || recordingRuntime.value.state != RecordingState.Idle) return
+        pendingStartStep.value = StartStep.Validating
         val selectedVideo = selectedVideoConfiguration.value
         if (selectedVideo == null || availableVideoConfigurations.value.none { it.sameEncodingAs(selectedVideo) }) {
             statusMessage.value = R.string.recording_settings_unavailable
+            clearPendingStart()
             return
         }
         requestedSessionAudioMode = selectedAudioMode.value
         if (requestedSessionAudioMode == AudioMode.DeviceAudio && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             statusMessage.value = R.string.device_audio_unavailable
+            clearPendingStart()
             return
         }
         storagePreflightPending = true
@@ -296,6 +310,7 @@ class MainActivity : ComponentActivity() {
             if (check !is StorageCheck.Available) {
                 statusMessage.value = R.string.storage_preflight_failed
                 storageDialog.value = check
+                clearPendingStart()
                 return@launch
             }
             pendingVideo = selectedVideo
